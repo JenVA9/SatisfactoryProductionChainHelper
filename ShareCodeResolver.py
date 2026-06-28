@@ -295,6 +295,42 @@ def _build_graph(solver_result: dict, data: dict) -> tuple:
     return nodes, edges
 
 
+def _repair_layer_violations(nodes: list, edges: list, layers: list) -> list:
+    """
+    Post-processing pass: ensure every node appears in a later layer than all
+    its non-cycle predecessors.
+
+    Kahn's cycle-breaker picks the node with the fewest remaining deps, but a
+    node that is merely *downstream* of a cycle (e.g. waiting for one cycle node)
+    can tie with the actual cycle participants and get placed too early.  This
+    pass corrects any such violations by iteratively pushing nodes to later
+    layers until layer(A) < layer(B) holds for every non-cycle edge A→B.
+
+    Cycle edges (both A→B and B→A present) are skipped — Kahn's ordering is
+    trusted for those.
+    """
+    id_to_node = {n["id"]: n for n in nodes}
+    node_layer  = {n["id"]: i for i, layer in enumerate(layers) for n in layer}
+    edge_set    = {(e["from_id"], e["to_id"]) for e in edges}
+
+    changed = True
+    while changed:
+        changed = False
+        for e in edges:
+            fid, tid = e["from_id"], e["to_id"]
+            if (tid, fid) in edge_set:           # cycle edge — skip
+                continue
+            if node_layer.get(fid, 0) >= node_layer.get(tid, 0):
+                node_layer[tid] = node_layer[fid] + 1
+                changed = True
+
+    max_layer  = max(node_layer.values(), default=-1)
+    new_layers: list = [[] for _ in range(max_layer + 1)]
+    for nid, li in node_layer.items():
+        new_layers[li].append(id_to_node[nid])
+    return [layer for layer in new_layers if layer]
+
+
 def _topological_layers(nodes: list, edges: list) -> list:
     """
     Kahn's algorithm with cycle breaking and late-placement of no-input recipe nodes.
@@ -382,7 +418,7 @@ def _topological_layers(nodes: list, edges: list) -> list:
             for consumer in out_edges[nid]:
                 remaining_in[consumer].discard(nid)
 
-    return layers
+    return _repair_layer_violations(nodes, edges, layers)
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +544,7 @@ def _print_chain(chain: dict):
 if __name__ == "__main__":
     import sys
 
-    url = "https://www.satisfactorytools.com/1.0/production?share=pF5HeFjEUEjaaSPwoU9Q"
+    url = "https://www.satisfactorytools.com/1.0/production?share=Z0YA200WCDdEOPwlzKiR"
     if len(sys.argv) > 1:
         url = sys.argv[1]
 
