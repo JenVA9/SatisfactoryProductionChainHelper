@@ -1,0 +1,2548 @@
+﻿<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Satisfactory Production Helper</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+
+             /* ==========================================================================
+        BLOCK A: Design tokens, theming, layout, components, animations
+        ========================================================================== */
+
+             /* --- Tokens & color system --- */
+             :root {
+                 /* Purple neon palette (dark mode defaults) */
+                 --bg-base: #0d0b12;
+                 --bg-raised: #13101e;
+                 --bg-hover: #1a1628;
+                 --bg-overlay: #0d0b12e6;
+                 --border: #2a2040;
+                 --border-bright: #3d2f6e;
+                 --text-primary: #e8e0ff;
+                 --text-secondary: #8b7ab8;
+                 --text-dim: #4a3f6b;
+                 /* Accent - user-overridable via settings */
+                 --accent-line: #a855f7;
+                 --accent-card: #1e1535;
+                 --accent-sidebar: #100d1a;
+                 --accent-button: #7c3aed;
+                 --accent-icon: #c084fc;
+                 /* Semantic */
+                 --green: #22c55e;
+                 --green-glow: #22c55e40;
+                 --red: #ef4444;
+                 --red-dim: #ef444420;
+                 --yellow: #eab308;
+                 --splitter: #f59e0b;
+                 /* Neon glow */
+                 --glow-sm: 0 0 8px var(--accent-line);
+                 --glow-md: 0 0 16px var(--accent-line), 0 0 32px #7c3aed60;
+                 --glow-card: 0 0 0 1px var(--accent-card), inset 0 0 20px #7c3aed08;
+                 /* Typography */
+                 --font-ui: 'Inter', system-ui, sans-serif;
+                 --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+                 /* Sizing */
+                 --sidebar-w: 240px;
+                 --card-w: 200px;
+                 --card-h: 220px;
+                 --radius: 8px;
+                 --radius-lg: 14px;
+                 /* Transitions */
+                 --t-fast: 120ms ease;
+                 --t-normal: 220ms ease;
+                 --t-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
+             }
+
+             [data-theme="light"] {
+                 --bg-base: #f0ecff;
+                 --bg-raised: #e8e2f8;
+                 --bg-hover: #ddd6f5;
+                 --bg-overlay: #f0ecffe6;
+                 --border: #c4b8e8;
+                 --border-bright: #9d7fe0;
+                 --text-primary: #1a0e35;
+                 --text-secondary: #5b4a8a;
+                 --text-dim: #9d8ec4;
+                 --accent-line: #7c3aed;
+                 --accent-card: #ede9ff;
+                 --accent-sidebar: #e4defc;
+                 --accent-button: #7c3aed;
+                 --accent-icon: #6d28d9;
+                 --glow-sm: 0 0 8px #7c3aed40;
+                 --glow-md: 0 0 16px #7c3aed40;
+                 --glow-card: 0 0 0 1px var(--border), inset 0 0 20px #7c3aed06;
+             }
+
+             /* --- Reset & base --- */
+             *, *::before, *::after {
+                 box-sizing: border-box;
+                 margin: 0;
+                 padding: 0;
+             }
+
+             html, body {
+                 height: 100%;
+                 overflow: hidden;
+                 font-family: var(--font-ui);
+                 background: var(--bg-base);
+                 color: var(--text-primary);
+                 font-size: 14px;
+                 line-height: 1.5;
+             }
+
+             button {
+                 cursor: pointer;
+                 border: none;
+                 background: none;
+                 font-family: inherit;
+                 font-size: inherit;
+                 color: inherit;
+             }
+
+             input {
+                 font-family: inherit;
+                 font-size: inherit;
+                 color: inherit;
+                 background: none;
+                 border: none;
+                 outline: none;
+             }
+
+             /* --- App shell --- */
+             #app {
+                 display: flex;
+                 height: 100vh;
+                 width: 100vw;
+                 overflow: hidden;
+             }
+
+             /* ==========================================================================
+        Sidebar
+        ========================================================================== */
+
+             #sidebar {
+                 width: var(--sidebar-w);
+                 min-width: var(--sidebar-w);
+                 background: var(--accent-sidebar);
+                 border-right: 1px solid var(--border);
+                 display: flex;
+                 flex-direction: column;
+                 height: 100%;
+                 z-index: 10;
+             }
+
+             #sidebar-header {
+                 display: flex;
+                 align-items: center;
+                 justify-content: space-between;
+                 padding: 14px 12px 12px;
+                 border-bottom: 1px solid var(--border);
+                 gap: 6px;
+             }
+
+             #sidebar-title {
+                 font-family: var(--font-mono);
+                 font-size: 11px;
+                 font-weight: 600;
+                 letter-spacing: 0.12em;
+                 text-transform: uppercase;
+                 color: var(--text-secondary);
+                 flex: 1;
+                 white-space: nowrap;
+                 overflow: hidden;
+                 text-overflow: ellipsis;
+             }
+
+             .icon-btn {
+                 width: 28px;
+                 height: 28px;
+                 border-radius: var(--radius);
+                 display: flex;
+                 align-items: center;
+                 justify-content: center;
+                 color: var(--text-secondary);
+                 transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+                 flex-shrink: 0;
+             }
+
+                 .icon-btn:hover {
+                     background: var(--bg-hover);
+                     color: var(--text-primary);
+                 }
+
+                 .icon-btn.primary:hover {
+                     background: var(--accent-button);
+                     color: #fff;
+                     box-shadow: var(--glow-sm);
+                 }
+
+                 .icon-btn svg {
+                     width: 16px;
+                     height: 16px;
+                     stroke: currentColor;
+                     fill: none;
+                     stroke-width: 2;
+                     stroke-linecap: round;
+                     stroke-linejoin: round;
+                 }
+
+             /* Tab list */
+             #tab-list {
+                 flex: 1;
+                 overflow-y: auto;
+                 padding: 8px 0;
+                 scrollbar-width: thin;
+                 scrollbar-color: var(--border) transparent;
+             }
+
+             .tab-item {
+                 position: relative;
+                 display: flex;
+                 flex-direction: column;
+                 gap: 4px;
+                 padding: 10px 12px;
+                 cursor: pointer;
+                 border-left: 2px solid transparent;
+                 transition: background var(--t-fast), border-color var(--t-fast);
+                 user-select: none;
+             }
+
+                 .tab-item:hover {
+                     background: var(--bg-hover);
+                 }
+
+                 .tab-item.active {
+                     background: var(--bg-raised);
+                     border-left-color: var(--accent-line);
+                 }
+
+                     .tab-item.active .tab-name {
+                         color: var(--text-primary);
+                     }
+
+             .tab-header {
+                 display: flex;
+                 align-items: center;
+                 gap: 6px;
+             }
+
+             .tab-name {
+                 font-size: 13px;
+                 font-weight: 500;
+                 color: var(--text-secondary);
+                 flex: 1;
+                 white-space: nowrap;
+                 overflow: hidden;
+                 text-overflow: ellipsis;
+             }
+
+             .tab-name-input {
+                 flex: 1;
+                 font-size: 13px;
+                 font-weight: 500;
+                 color: var(--text-primary);
+                 background: var(--bg-hover);
+                 border: 1px solid var(--accent-line);
+                 border-radius: 4px;
+                 padding: 0 4px;
+                 height: 20px;
+             }
+
+             .tab-actions {
+                 display: none;
+                 gap: 2px;
+                 align-items: center;
+             }
+
+             .tab-item:hover .tab-actions,
+             .tab-item.active .tab-actions {
+                 display: flex;
+             }
+
+             .tab-action-btn {
+                 width: 20px;
+                 height: 20px;
+                 border-radius: 4px;
+                 display: flex;
+                 align-items: center;
+                 justify-content: center;
+                 color: var(--text-dim);
+                 transition: background var(--t-fast), color var(--t-fast);
+             }
+
+                 .tab-action-btn:hover {
+                     background: var(--bg-base);
+                     color: var(--text-secondary);
+                 }
+
+                 .tab-action-btn.del:hover {
+                     background: var(--red-dim);
+                     color: var(--red);
+                 }
+
+                 .tab-action-btn svg {
+                     width: 12px;
+                     height: 12px;
+                     stroke: currentColor;
+                     fill: none;
+                     stroke-width: 2;
+                     stroke-linecap: round;
+                     stroke-linejoin: round;
+                 }
+
+             /* Progress bar */
+             .tab-progress {
+                 display: flex;
+                 align-items: center;
+                 gap: 6px;
+             }
+
+             .tab-progress-bar {
+                 flex: 1;
+                 height: 3px;
+                 background: var(--border);
+                 border-radius: 99px;
+                 overflow: hidden;
+             }
+
+             .tab-progress-fill {
+                 height: 100%;
+                 background: var(--accent-line);
+                 border-radius: 99px;
+                 transition: width var(--t-normal);
+                 box-shadow: 0 0 6px var(--accent-line);
+                 width: 0%;
+             }
+
+             .tab-progress-label {
+                 font-family: var(--font-mono);
+                 font-size: 10px;
+                 color: var(--text-dim);
+                 white-space: nowrap;
+             }
+
+             /* Empty state */
+             #tab-empty {
+                 padding: 24px 16px;
+                 text-align: center;
+                 color: var(--text-dim);
+                 font-size: 12px;
+                 line-height: 1.8;
+             }
+
+             /* Sidebar footer */
+             #sidebar-footer {
+                 border-top: 1px solid var(--border);
+                 padding: 10px 12px;
+             }
+
+             .theme-toggle {
+                 display: flex;
+                 align-items: center;
+                 gap: 8px;
+                 width: 100%;
+                 padding: 6px 8px;
+                 border-radius: var(--radius);
+                 color: var(--text-secondary);
+                 font-size: 12px;
+                 transition: background var(--t-fast), color var(--t-fast);
+             }
+
+                 .theme-toggle:hover {
+                     background: var(--bg-hover);
+                     color: var(--text-primary);
+                 }
+
+                 .theme-toggle svg {
+                     width: 14px;
+                     height: 14px;
+                     stroke: currentColor;
+                     fill: none;
+                     stroke-width: 2;
+                     stroke-linecap: round;
+                     stroke-linejoin: round;
+                     flex-shrink: 0;
+                 }
+
+             /* ==========================================================================
+        Main canvas
+        ========================================================================== */
+
+             #main {
+                 flex: 1;
+                 display: flex;
+                 flex-direction: column;
+                 overflow: hidden;
+                 position: relative;
+             }
+
+             #canvas-wrap {
+                 flex: 1;
+                 overflow: hidden;
+                 position: relative;
+                 cursor: default;
+             }
+
+             #canvas {
+                 position: absolute;
+                 top: 0;
+                 left: 0;
+                 transform-origin: 0 0;
+                 /* layers injected here by JS */
+                 padding: 40px;
+                 display: flex;
+                 flex-direction: column;
+                 gap: 64px;
+                 min-width: 100%;
+                 min-height: 100%;
+             }
+
+             /* SVG line overlay - sits above canvas content */
+             #line-svg {
+                 position: absolute;
+                 top: 0;
+                 left: 0;
+                 width: 100%;
+                 height: 100%;
+                 pointer-events: none;
+                 overflow: visible;
+                 z-index: 0;
+             }
+
+             .layer-row {
+                 position: relative;
+                 z-index: 1;
+             }
+
+             /* Empty / placeholder state */
+             #canvas-empty {
+                 position: absolute;
+                 inset: 0;
+                 display: flex;
+                 flex-direction: column;
+                 align-items: center;
+                 justify-content: center;
+                 gap: 16px;
+                 color: var(--text-dim);
+                 pointer-events: none;
+             }
+
+                 #canvas-empty svg {
+                     width: 48px;
+                     height: 48px;
+                     stroke: var(--border-bright);
+                     fill: none;
+                     stroke-width: 1.5;
+                     stroke-linecap: round;
+                     stroke-linejoin: round;
+                 }
+
+                 #canvas-empty p {
+                     font-size: 13px;
+                     text-align: center;
+                     max-width: 220px;
+                     line-height: 1.8;
+                 }
+
+                 #canvas-empty strong {
+                     color: var(--text-secondary);
+                     font-weight: 500;
+                 }
+
+             /* ==========================================================================
+        Layer rows
+        ========================================================================== */
+
+             .layer-row {
+                 display: flex;
+                 flex-direction: column;
+                 gap: 16px;
+                 transition: opacity var(--t-slow);
+             }
+
+                 .layer-row.faded {
+                     opacity: 0.25;
+                     /* intentionally still interactive so you can un-tick accidental ticks */
+                 }
+
+                 .layer-row.hidden {
+                     opacity: 0;
+                     pointer-events: none;
+                     height: 0;
+                     overflow: hidden;
+                     margin: 0;
+                     gap: 0;
+                 }
+
+             .layer-label {
+                 font-family: var(--font-mono);
+                 font-size: 10px;
+                 font-weight: 600;
+                 letter-spacing: 0.14em;
+                 text-transform: uppercase;
+                 color: var(--text-dim);
+                 display: flex;
+                 align-items: center;
+                 gap: 10px;
+             }
+
+                 .layer-label::after {
+                     content: '';
+                     flex: 1;
+                     height: 1px;
+                     background: var(--border);
+                 }
+
+             .layer-cards {
+                 display: flex;
+                 flex-wrap: wrap;
+                 gap: 20px;
+                 align-items: flex-start;
+             }
+
+             /* ==========================================================================
+        Machine / item cards
+        ========================================================================== */
+
+             .card-wrap {
+                 display: flex;
+                 align-items: center;
+                 gap: 8px;
+             }
+
+             /* Input labels - left of card */
+             .card-io {
+                 display: flex;
+                 flex-direction: column;
+                 gap: 4px;
+                 max-width: 120px;
+             }
+
+                 .card-io.outputs {
+                     align-items: flex-start;
+                 }
+
+                 .card-io.inputs {
+                     align-items: flex-end;
+                 }
+
+             .io-label {
+                 display: flex;
+                 align-items: center;
+                 gap: 5px;
+                 background: var(--bg-raised);
+                 border: 1px solid var(--border);
+                 border-radius: var(--radius);
+                 padding: 3px 7px;
+                 font-family: var(--font-mono);
+                 font-size: 10px;
+                 color: var(--text-secondary);
+                 white-space: nowrap;
+                 max-width: 120px;
+                 overflow: hidden;
+             }
+
+                 .io-label img {
+                     width: 14px;
+                     height: 14px;
+                     object-fit: contain;
+                     flex-shrink: 0;
+                     opacity: 0.8;
+                 }
+
+             .io-amount {
+                 color: var(--accent-line);
+                 font-weight: 600;
+             }
+
+             /* Card itself */
+             .machine-card {
+                 width: var(--card-w);
+                 min-height: var(--card-h);
+                 background: var(--accent-card);
+                 border: 1px solid var(--border);
+                 border-radius: var(--radius-lg);
+                 padding: 14px;
+                 display: flex;
+                 flex-direction: column;
+                 align-items: center;
+                 gap: 10px;
+                 cursor: pointer;
+                 transition: border-color var(--t-normal), box-shadow var(--t-normal), background var(--t-normal), opacity var(--t-slow), transform var(--t-slow);
+                 position: relative;
+                 box-shadow: var(--glow-card);
+             }
+
+                 .machine-card:hover {
+                     border-color: var(--border-bright);
+                     background: var(--bg-raised);
+                     transform: translateY(-2px);
+                 }
+
+                 .machine-card.ticked {
+                     border-color: var(--green);
+                     box-shadow: 0 0 0 1px var(--green), var(--green-glow), var(--glow-card);
+                     background: #0f2318;
+                 }
+
+             [data-theme="light"] .machine-card.ticked {
+                 background: #f0fff4;
+             }
+
+             .machine-card.splitter-card {
+                 border-color: var(--splitter);
+                 box-shadow: 0 0 0 1px var(--splitter)40;
+                 background: #1a1200;
+             }
+
+             [data-theme="light"] .machine-card.splitter-card {
+                 background: #fffbeb;
+             }
+
+             .machine-card.fade-in {
+                 animation: fadeInCard var(--t-slow) forwards;
+             }
+
+             @keyframes fadeInCard {
+                 from {
+                     opacity: 0;
+                     transform: translateY(12px);
+                 }
+
+                 to {
+                     opacity: 1;
+                     transform: translateY(0);
+                 }
+             }
+
+             /* Tick indicator */
+             .card-tick {
+                 position: absolute;
+                 top: 8px;
+                 right: 8px;
+                 width: 18px;
+                 height: 18px;
+                 border-radius: 50%;
+                 border: 1.5px solid var(--border-bright);
+                 display: flex;
+                 align-items: center;
+                 justify-content: center;
+                 transition: background var(--t-fast), border-color var(--t-fast);
+             }
+
+             .machine-card.ticked .card-tick {
+                 background: var(--green);
+                 border-color: var(--green);
+             }
+
+             .card-tick svg {
+                 width: 10px;
+                 height: 10px;
+                 stroke: #fff;
+                 fill: none;
+                 stroke-width: 2.5;
+                 stroke-linecap: round;
+                 stroke-linejoin: round;
+                 opacity: 0;
+                 transition: opacity var(--t-fast);
+             }
+
+             .machine-card.ticked .card-tick svg {
+                 opacity: 1;
+             }
+
+             /* Card icon */
+             .card-icon {
+                 width: 72px;
+                 height: 72px;
+                 border-radius: 10px;
+                 overflow: hidden;
+                 background: var(--bg-base);
+                 display: flex;
+                 align-items: center;
+                 justify-content: center;
+                 flex-shrink: 0;
+                 border: 1px solid var(--border);
+             }
+
+                 .card-icon img {
+                     width: 64px;
+                     height: 64px;
+                     object-fit: contain;
+                     image-rendering: crisp-edges;
+                 }
+
+                 .card-icon .icon-fallback {
+                     font-size: 28px;
+                     color: var(--text-dim);
+                 }
+
+             /* Card body */
+             .card-body {
+                 display: flex;
+                 flex-direction: column;
+                 align-items: center;
+                 gap: 4px;
+                 width: 100%;
+             }
+
+             .card-title {
+                 font-size: 12px;
+                 font-weight: 600;
+                 color: var(--text-primary);
+                 text-align: center;
+                 line-height: 1.3;
+             }
+
+             .card-machine {
+                 font-family: var(--font-mono);
+                 font-size: 10px;
+                 color: var(--text-dim);
+                 text-align: center;
+             }
+
+             .card-count {
+                 display: flex;
+                 flex-direction: column;
+                 align-items: center;
+                 gap: 2px;
+                 margin-top: 4px;
+                 width: 100%;
+             }
+
+             .count-row {
+                 display: flex;
+                 align-items: center;
+                 gap: 5px;
+                 font-family: var(--font-mono);
+                 font-size: 11px;
+                 color: var(--text-secondary);
+             }
+
+             .count-num {
+                 font-size: 15px;
+                 font-weight: 600;
+                 color: var(--accent-icon);
+             }
+
+             .count-clock {
+                 font-size: 10px;
+                 color: var(--text-dim);
+             }
+
+             /* Byproduct / output dismiss card */
+             .dismiss-card {
+                 display: flex;
+                 align-items: center;
+                 gap: 14px;
+                 padding: 16px 20px;
+                 background: var(--bg-raised);
+                 border: 1px solid var(--border);
+                 border-radius: var(--radius-lg);
+                 cursor: pointer;
+                 transition: background var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast), opacity var(--t-slow);
+                 min-width: 220px;
+                 max-width: 360px;
+             }
+
+                 .dismiss-card:hover {
+                     background: var(--bg-hover);
+                     border-color: var(--border-bright);
+                     box-shadow: var(--glow-card);
+                     transform: translateY(-1px);
+                 }
+
+                 .dismiss-card.byproduct {
+                     border-left: 4px solid var(--yellow);
+                 }
+
+                 .dismiss-card.product {
+                     border-left: 4px solid var(--green);
+                 }
+
+                 .dismiss-card.sink {
+                     border-left: 4px solid var(--text-dim);
+                 }
+
+                 .dismiss-card img {
+                     width: 48px;
+                     height: 48px;
+                     object-fit: contain;
+                     flex-shrink: 0;
+                 }
+
+             .dismiss-card-text {
+                 flex: 1;
+                 min-width: 0;
+             }
+
+             .dismiss-card-name {
+                 font-size: 14px;
+                 font-weight: 600;
+                 white-space: nowrap;
+                 overflow: hidden;
+                 text-overflow: ellipsis;
+                 color: var(--text-primary);
+             }
+
+             .dismiss-card-sub {
+                 font-family: var(--font-mono);
+                 font-size: 12px;
+                 color: var(--accent-line);
+                 font-weight: 600;
+                 margin-top: 2px;
+             }
+
+             .dismiss-card-hint {
+                 font-size: 11px;
+                 color: var(--text-dim);
+                 white-space: nowrap;
+             }
+
+             /* ==========================================================================
+        Settings overlay
+        ========================================================================== */
+
+             #settings-overlay {
+                 position: fixed;
+                 inset: 0;
+                 z-index: 100;
+                 display: flex;
+                 align-items: center;
+                 justify-content: center;
+                 pointer-events: none;
+                 opacity: 0;
+                 transition: opacity var(--t-normal);
+             }
+
+                 #settings-overlay.open {
+                     pointer-events: auto;
+                     opacity: 1;
+                 }
+
+             #settings-blur {
+                 position: absolute;
+                 inset: 0;
+                 backdrop-filter: blur(6px);
+                 background: #00000040;
+                 cursor: pointer;
+             }
+
+             [data-theme="light"] #settings-blur {
+                 background: #ffffff30;
+             }
+
+             #settings-panel {
+                 position: relative;
+                 width: 50%;
+                 max-height: 80vh;
+                 background: var(--bg-raised);
+                 border: 1px solid var(--border-bright);
+                 border-radius: var(--radius-lg);
+                 box-shadow: var(--glow-md), 0 24px 64px #00000060;
+                 display: flex;
+                 flex-direction: column;
+                 overflow: hidden;
+                 z-index: 1;
+             }
+
+             #settings-header {
+                 display: flex;
+                 align-items: center;
+                 justify-content: space-between;
+                 padding: 18px 20px 14px;
+                 border-bottom: 1px solid var(--border);
+             }
+
+                 #settings-header h2 {
+                     font-size: 15px;
+                     font-weight: 600;
+                     color: var(--text-primary);
+                     display: flex;
+                     align-items: center;
+                     gap: 8px;
+                 }
+
+                     #settings-header h2 svg {
+                         width: 16px;
+                         height: 16px;
+                         stroke: var(--accent-line);
+                         fill: none;
+                         stroke-width: 2;
+                         stroke-linecap: round;
+                         stroke-linejoin: round;
+                     }
+
+             #settings-body {
+                 flex: 1;
+                 overflow-y: auto;
+                 padding: 20px;
+                 display: flex;
+                 flex-direction: column;
+                 gap: 24px;
+                 scrollbar-width: thin;
+                 scrollbar-color: var(--border) transparent;
+             }
+
+             .settings-section h3 {
+                 font-family: var(--font-mono);
+                 font-size: 10px;
+                 font-weight: 600;
+                 letter-spacing: 0.12em;
+                 text-transform: uppercase;
+                 color: var(--text-dim);
+                 margin-bottom: 12px;
+             }
+
+             .settings-row {
+                 display: flex;
+                 align-items: center;
+                 justify-content: space-between;
+                 gap: 16px;
+                 padding: 8px 0;
+                 border-bottom: 1px solid var(--border);
+             }
+
+                 .settings-row:last-child {
+                     border-bottom: none;
+                 }
+
+             .settings-label {
+                 font-size: 13px;
+                 color: var(--text-secondary);
+             }
+
+             /* Toggle switch */
+             .toggle {
+                 position: relative;
+                 width: 36px;
+                 height: 20px;
+                 flex-shrink: 0;
+             }
+
+                 .toggle input {
+                     opacity: 0;
+                     width: 0;
+                     height: 0;
+                     position: absolute;
+                 }
+
+             .toggle-track {
+                 position: absolute;
+                 inset: 0;
+                 background: var(--border);
+                 border-radius: 99px;
+                 transition: background var(--t-fast);
+                 cursor: pointer;
+             }
+
+             .toggle input:checked + .toggle-track {
+                 background: var(--accent-button);
+                 box-shadow: 0 0 8px var(--accent-button);
+             }
+
+             .toggle-track::after {
+                 content: '';
+                 position: absolute;
+                 top: 3px;
+                 left: 3px;
+                 width: 14px;
+                 height: 14px;
+                 background: #fff;
+                 border-radius: 50%;
+                 transition: transform var(--t-fast);
+             }
+
+             .toggle input:checked + .toggle-track::after {
+                 transform: translateX(16px);
+             }
+
+             /* Color pickers */
+             .color-picker-row {
+                 display: flex;
+                 gap: 8px;
+                 flex-wrap: wrap;
+             }
+
+             .color-swatch {
+                 display: flex;
+                 flex-direction: column;
+                 align-items: center;
+                 gap: 5px;
+                 font-size: 10px;
+                 color: var(--text-dim);
+                 font-family: var(--font-mono);
+             }
+
+                 .color-swatch input[type="color"] {
+                     width: 32px;
+                     height: 32px;
+                     border-radius: var(--radius);
+                     border: 1px solid var(--border);
+                     padding: 2px;
+                     cursor: pointer;
+                     background: var(--bg-base);
+                 }
+
+             /* Reset button */
+             .reset-btn {
+                 padding: 8px 16px;
+                 border-radius: var(--radius);
+                 background: var(--bg-hover);
+                 border: 1px solid var(--border);
+                 color: var(--text-secondary);
+                 font-size: 12px;
+                 transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+             }
+
+                 .reset-btn:hover {
+                     background: var(--red-dim);
+                     border-color: var(--red);
+                     color: var(--red);
+                 }
+
+             /* ==========================================================================
+        Attribution modal
+        ========================================================================== */
+
+             #attribution-modal {
+                 position: fixed;
+                 inset: 0;
+                 z-index: 200;
+                 display: flex;
+                 align-items: center;
+                 justify-content: center;
+                 background: #00000080;
+                 backdrop-filter: blur(4px);
+             }
+
+                 #attribution-modal.hidden {
+                     display: none;
+                 }
+
+             #attribution-panel {
+                 background: var(--bg-raised);
+                 border: 1px solid var(--border-bright);
+                 border-radius: var(--radius-lg);
+                 padding: 32px 36px;
+                 max-width: 440px;
+                 width: 90%;
+                 text-align: center;
+                 display: flex;
+                 flex-direction: column;
+                 align-items: center;
+                 gap: 16px;
+                 box-shadow: var(--glow-md), 0 24px 64px #00000080;
+             }
+
+                 #attribution-panel .attr-logo {
+                     font-family: var(--font-mono);
+                     font-size: 11px;
+                     letter-spacing: 0.1em;
+                     color: var(--accent-line);
+                     text-transform: uppercase;
+                     text-shadow: var(--glow-sm);
+                 }
+
+                 #attribution-panel h2 {
+                     font-size: 18px;
+                     font-weight: 600;
+                     color: var(--text-primary);
+                     line-height: 1.3;
+                 }
+
+                 #attribution-panel p {
+                     font-size: 13px;
+                     color: var(--text-secondary);
+                     line-height: 1.7;
+                 }
+
+                 #attribution-panel a {
+                     color: var(--accent-line);
+                     text-decoration: none;
+                     text-shadow: var(--glow-sm);
+                 }
+
+                     #attribution-panel a:hover {
+                         text-decoration: underline;
+                     }
+
+             .attr-dismiss {
+                 margin-top: 8px;
+                 padding: 10px 28px;
+                 background: var(--accent-button);
+                 color: #fff;
+                 border-radius: var(--radius);
+                 font-size: 13px;
+                 font-weight: 500;
+                 transition: background var(--t-fast), box-shadow var(--t-fast);
+                 box-shadow: var(--glow-sm);
+             }
+
+                 .attr-dismiss:hover {
+                     background: #6d28d9;
+                     box-shadow: var(--glow-md);
+                 }
+
+             /* ==========================================================================
+        Add tab prompt (inline in main area)
+        ========================================================================== */
+
+             #add-prompt {
+                 position: fixed;
+                 inset: 0;
+                 z-index: 150;
+                 display: flex;
+                 align-items: center;
+                 justify-content: center;
+                 pointer-events: none;
+                 opacity: 0;
+                 transition: opacity var(--t-normal);
+             }
+
+                 #add-prompt.open {
+                     pointer-events: auto;
+                     opacity: 1;
+                 }
+
+             #add-prompt-blur {
+                 position: absolute;
+                 inset: 0;
+                 backdrop-filter: blur(6px);
+                 background: #00000050;
+                 cursor: pointer;
+             }
+
+             #add-prompt-panel {
+                 position: relative;
+                 z-index: 1;
+                 background: var(--bg-raised);
+                 border: 1px solid var(--border-bright);
+                 border-radius: var(--radius-lg);
+                 padding: 28px 28px 24px;
+                 width: 480px;
+                 max-width: 90%;
+                 box-shadow: var(--glow-md), 0 24px 64px #00000060;
+                 display: flex;
+                 flex-direction: column;
+                 gap: 16px;
+             }
+
+                 #add-prompt-panel h3 {
+                     font-size: 15px;
+                     font-weight: 600;
+                     color: var(--text-primary);
+                 }
+
+                 #add-prompt-panel p {
+                     font-size: 12px;
+                     color: var(--text-dim);
+                     line-height: 1.6;
+                 }
+
+             #share-input {
+                 width: 100%;
+                 padding: 10px 14px;
+                 background: var(--bg-base);
+                 border: 1px solid var(--border-bright);
+                 border-radius: var(--radius);
+                 color: var(--text-primary);
+                 font-family: var(--font-mono);
+                 font-size: 12px;
+                 transition: border-color var(--t-fast), box-shadow var(--t-fast);
+             }
+
+                 #share-input:focus {
+                     border-color: var(--accent-line);
+                     box-shadow: var(--glow-sm);
+                 }
+
+                 #share-input::placeholder {
+                     color: var(--text-dim);
+                 }
+
+             .prompt-actions {
+                 display: flex;
+                 gap: 8px;
+                 justify-content: flex-end;
+             }
+
+             .btn {
+                 padding: 8px 18px;
+                 border-radius: var(--radius);
+                 font-size: 13px;
+                 font-weight: 500;
+                 transition: background var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
+             }
+
+             .btn-primary {
+                 background: var(--accent-button);
+                 color: #fff;
+                 box-shadow: var(--glow-sm);
+             }
+
+                 .btn-primary:hover {
+                     background: #6d28d9;
+                     box-shadow: var(--glow-md);
+                 }
+
+             .btn-secondary {
+                 background: var(--bg-hover);
+                 color: var(--text-secondary);
+                 border: 1px solid var(--border);
+             }
+
+                 .btn-secondary:hover {
+                     color: var(--text-primary);
+                     border-color: var(--border-bright);
+                 }
+
+             #share-error {
+                 font-size: 12px;
+                 color: var(--red);
+                 display: none;
+             }
+
+                 #share-error.visible {
+                     display: block;
+                 }
+
+             /* ==========================================================================
+        Scrollbar theming
+        ========================================================================== */
+
+             ::-webkit-scrollbar {
+                 width: 6px;
+                 height: 6px;
+             }
+
+             ::-webkit-scrollbar-track {
+                 background: transparent;
+             }
+
+             ::-webkit-scrollbar-thumb {
+                 background: var(--border);
+                 border-radius: 99px;
+             }
+
+                 ::-webkit-scrollbar-thumb:hover {
+                     background: var(--border-bright);
+                 }
+
+             /* ==========================================================================
+        Utility
+        ========================================================================== */
+
+             .visually-hidden {
+                 position: absolute;
+                 width: 1px;
+                 height: 1px;
+                 overflow: hidden;
+                 clip: rect(0,0,0,0);
+                 white-space: nowrap;
+             }
+
+
+             /* ==========================================================================
+        Spinner (monospace frame animation)
+        ========================================================================== */
+
+             @keyframes spin-frames {
+                 0% {
+                     content: '⠋';
+                 }
+
+                 10% {
+                     content: '⠙';
+                 }
+
+                 20% {
+                     content: '⠹';
+                 }
+
+                 30% {
+                     content: '⠸';
+                 }
+
+                 40% {
+                     content: '⠼';
+                 }
+
+                 50% {
+                     content: '⠴';
+                 }
+
+                 60% {
+                     content: '⠦';
+                 }
+
+                 70% {
+                     content: '⠧';
+                 }
+
+                 80% {
+                     content: '⠇';
+                 }
+
+                 90% {
+                     content: '⠏';
+                 }
+
+                 100% {
+                     content: '⠋';
+                 }
+             }
+
+             .spinner {
+                 display: inline-flex;
+                 align-items: center;
+                 gap: 8px;
+                 font-family: var(--font-mono);
+                 font-size: 13px;
+                 color: var(--accent-line);
+                 text-shadow: var(--glow-sm);
+             }
+
+                 .spinner::before {
+                     content: '⠋';
+                     display: inline-block;
+                     animation: spin-frames 0.8s steps(10, end) infinite;
+                     font-size: 16px;
+                     line-height: 1;
+                 }
+
+             /* Used inside the btn */
+             .btn-primary.loading {
+                 opacity: 0.85;
+                 pointer-events: none;
+                 display: inline-flex;
+                 align-items: center;
+                 gap: 8px;
+             }
+
+                 .btn-primary.loading::before {
+                     content: '⠋';
+                     display: inline-block;
+                     animation: spin-frames 0.8s steps(10, end) infinite;
+                     font-size: 14px;
+                     line-height: 1;
+                 }
+
+
+             /* ==========================================================================
+        IO label tooltip (hover on small icons)
+        ========================================================================== */
+             .io-label {
+                 position: relative;
+             }
+
+             .io-tooltip {
+                 position: absolute;
+                 bottom: calc(100% + 6px);
+                 left: 50%;
+                 transform: translateX(-50%);
+                 background: var(--bg-raised);
+                 border: 1px solid var(--border-bright);
+                 border-radius: var(--radius);
+                 padding: 4px 8px;
+                 font-family: var(--font-ui);
+                 font-size: 11px;
+                 color: var(--text-primary);
+                 white-space: nowrap;
+                 pointer-events: none;
+                 opacity: 0;
+                 transition: opacity 120ms ease;
+                 z-index: 100;
+                 box-shadow: var(--glow-sm);
+             }
+
+             .io-label:hover .io-tooltip {
+                 opacity: 1;
+             }
+    </style>
+</head>
+<body>
+
+    <!-- =========================================================
+         Attribution modal (first load only)
+         ========================================================= -->
+    <div id="attribution-modal">
+        <div id="attribution-panel">
+            <div class="attr-logo">Satisfactory Production Helper</div>
+            <h2>Built on top of Satisfactory Tools</h2>
+            <p>
+                Production data, solver, and assets are provided by
+                <a href="https://www.satisfactorytools.com" target="_blank" rel="noopener">satisfactorytools.com</a>.
+                This tool is a local build tracker layered on top of that planner.
+                Please support the original project.
+            </p>
+            <button class="attr-dismiss" id="attr-dismiss-btn">Got it</button>
+        </div>
+    </div>
+
+    <!-- =========================================================
+         App shell
+         ========================================================= -->
+    <div id="app">
+
+        <!-- Sidebar -->
+        <aside id="sidebar">
+            <div id="sidebar-header">
+                <span id="sidebar-title">Productions</span>
+                <button class="icon-btn" id="btn-settings" title="Settings" aria-label="Open settings">
+                    <!-- Cog -->
+                    <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" /></svg>
+                </button>
+                <button class="icon-btn primary" id="btn-add" title="Add production" aria-label="Add production">
+                    <!-- Plus -->
+                    <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                </button>
+            </div>
+
+            <div id="tab-list">
+                <div id="tab-empty">
+                    <p>No productions yet.<br><strong>Press +</strong> to add one.</p>
+                </div>
+                <!-- Tabs injected here by JS -->
+            </div>
+
+            <div id="sidebar-footer">
+                <button class="theme-toggle" id="btn-theme">
+                    <!-- Moon icon (shown in dark mode) -->
+                    <svg id="theme-icon-dark" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
+                    <!-- Sun icon (shown in light mode, hidden by default) -->
+                    <svg id="theme-icon-light" viewBox="0 0 24 24" style="display:none"><circle cx="12" cy="12" r="5" /><line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" /><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" /><line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" /><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" /></svg>
+                    <span id="theme-label">Dark mode</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main canvas -->
+        <main id="main">
+            <div id="canvas-wrap">
+                <div id="canvas">
+                    <!-- Layer rows injected here by JS -->
+                    <svg id="line-svg" aria-hidden="true"></svg>
+                </div>
+
+                <!-- Empty state -->
+                <div id="canvas-empty">
+                    <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
+                    <p>Select a production from the sidebar,<br>or press <strong>+</strong> to add one.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- =========================================================
+         Settings overlay
+         ========================================================= -->
+    <div id="settings-overlay" role="dialog" aria-label="Settings" aria-modal="false">
+        <div id="settings-blur" id="settings-close-bg"></div>
+        <div id="settings-panel">
+            <div id="settings-header">
+                <h2>
+                    <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" /></svg>
+                    Settings
+                </h2>
+                <button class="icon-btn" id="btn-settings-close" aria-label="Close settings">
+                    <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+            </div>
+
+            <div id="settings-body">
+
+                <div class="settings-section">
+                    <h3>Appearance</h3>
+                    <div class="settings-row">
+                        <span class="settings-label">Dark mode</span>
+                        <label class="toggle">
+                            <input type="checkbox" id="setting-darkmode" checked>
+                            <div class="toggle-track"></div>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Accent colors</h3>
+                    <div class="settings-row">
+                        <span class="settings-label">Accents</span>
+                        <div class="color-picker-row">
+                            <div class="color-swatch">
+                                <input type="color" id="color-line" value="#a855f7" title="Connection lines">
+                                <span>Lines</span>
+                            </div>
+                            <div class="color-swatch">
+                                <input type="color" id="color-card" value="#1e1535" title="Machine cards">
+                                <span>Cards</span>
+                            </div>
+                            <div class="color-swatch">
+                                <input type="color" id="color-sidebar" value="#100d1a" title="Sidebar">
+                                <span>Sidebar</span>
+                            </div>
+                            <div class="color-swatch">
+                                <input type="color" id="color-button" value="#7c3aed" title="Buttons &amp; borders">
+                                <span>Buttons</span>
+                            </div>
+                            <div class="color-swatch">
+                                <input type="color" id="color-icon" value="#c084fc" title="Icons / amounts">
+                                <span>Icons</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Backgrounds</span>
+                        <div class="color-picker-row">
+                            <div class="color-swatch">
+                                <input type="color" id="color-bg-base" value="#0d0b12" title="Main background">
+                                <span>Base</span>
+                            </div>
+                            <div class="color-swatch">
+                                <input type="color" id="color-bg-raised" value="#13101e" title="Raised surfaces (panels, overlays)">
+                                <span>Surface</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Text</span>
+                        <div class="color-picker-row">
+                            <div class="color-swatch">
+                                <input type="color" id="color-text-primary" value="#e8e0ff" title="Primary text">
+                                <span>Primary</span>
+                            </div>
+                            <div class="color-swatch">
+                                <input type="color" id="color-text-secondary" value="#8b7ab8" title="Secondary / muted text">
+                                <span>Muted</span>
+                            </div>
+                            <div class="color-swatch">
+                                <input type="color" id="color-text-dim" value="#4a3f6b" title="Dim / placeholder text">
+                                <span>Dim</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Borders</span>
+                        <div class="color-picker-row">
+                            <div class="color-swatch">
+                                <input type="color" id="color-border" value="#2a2040" title="Borders and dividers">
+                                <span>Border</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Reset to defaults</span>
+                        <button class="reset-btn" id="btn-reset-colors">Reset</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- =========================================================
+         Add tab prompt
+         ========================================================= -->
+    <div id="add-prompt">
+        <div id="add-prompt-blur"></div>
+        <div id="add-prompt-panel">
+            <h3>Add production chain</h3>
+            <p>Paste a share URL or code from <a href="https://www.satisfactorytools.com" target="_blank" rel="noopener" style="color:var(--accent-line)">satisfactorytools.com</a></p>
+            <input type="text"
+                   id="share-input"
+                   placeholder="https://www.satisfactorytools.com/1.0/production?share=... or just the code"
+                   autocomplete="off"
+                   spellcheck="false">
+            <span id="share-error"></span>
+            <div class="prompt-actions">
+                <button class="btn btn-secondary" id="btn-add-cancel">Cancel</button>
+                <button class="btn btn-primary" id="btn-add-confirm">Load chain</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- placeholder JS until Block B -->
+    <script>
+        // Color pickers - per-theme, live apply + persist
+        const COLOR_DEFAULTS = {
+            dark: {
+                'color-line': '#a855f7',
+                'color-card': '#1e1535',
+                'color-sidebar': '#100d1a',
+                'color-button': '#7c3aed',
+                'color-icon': '#c084fc',
+                'color-bg-base': '#0d0b12',
+                'color-bg-raised': '#13101e',
+                'color-text-primary': '#e8e0ff',
+                'color-text-secondary': '#8b7ab8',
+                'color-text-dim': '#4a3f6b',
+                'color-border': '#2a2040',
+            },
+            light: {
+                'color-line': '#7c3aed',
+                'color-card': '#ede9ff',
+                'color-sidebar': '#e4defc',
+                'color-button': '#7c3aed',
+                'color-icon': '#6d28d9',
+                'color-bg-base': '#f0ecff',
+                'color-bg-raised': '#e8e2f8',
+                'color-text-primary': '#1a0e35',
+                'color-text-secondary': '#5b4a8a',
+                'color-text-dim': '#9d8ec4',
+                'color-border': '#c4b8e8',
+            },
+        };
+        const COLOR_VARS = {
+            'color-line': '--accent-line',
+            'color-card': '--accent-card',
+            'color-sidebar': '--accent-sidebar',
+            'color-button': '--accent-button',
+            'color-icon': '--accent-icon',
+            'color-bg-base': '--bg-base',
+            'color-bg-raised': '--bg-raised',
+            'color-text-primary': '--text-primary',
+            'color-text-secondary': '--text-secondary',
+            'color-text-dim': '--text-dim',
+            'color-border': '--border',
+        };
+
+        function currentTheme() {
+            return html.getAttribute('data-theme') || 'dark';
+        }
+
+        function applyColor(id, value) {
+            document.documentElement.style.setProperty(COLOR_VARS[id], value);
+            document.getElementById(id).value = value;
+            if (id === 'color-button') {
+                document.documentElement.style.setProperty('--border-bright', value + '99');
+            }
+            if (id === 'color-bg-base') {
+                document.documentElement.style.setProperty('--bg-hover', value);
+                document.documentElement.style.setProperty('--bg-overlay', value + 'e6');
+            }
+        }
+
+        function loadThemeColors(theme) {
+            const defaults = COLOR_DEFAULTS[theme];
+            Object.keys(defaults).forEach(id => {
+                const saved = localStorage.getItem('clr_' + theme + '_' + id) || defaults[id];
+                applyColor(id, saved);
+            });
+        }
+
+        Object.keys(COLOR_VARS).forEach(id => {
+            document.getElementById(id).addEventListener('input', e => {
+                const theme = currentTheme();
+                applyColor(id, e.target.value);
+                localStorage.setItem('clr_' + theme + '_' + id, e.target.value);
+            });
+        });
+
+        document.getElementById('btn-reset-colors').addEventListener('click', () => {
+            const theme = currentTheme();
+            const defaults = COLOR_DEFAULTS[theme];
+            Object.keys(defaults).forEach(id => {
+                applyColor(id, defaults[id]);
+                localStorage.removeItem('clr_' + theme + '_' + id);
+            });
+        });
+
+        // Attribution dismiss
+        const attrModal = document.getElementById('attribution-modal');
+        document.getElementById('attr-dismiss-btn').addEventListener('click', () => {
+            attrModal.classList.add('hidden');
+            localStorage.setItem('attr_seen', '1');
+        });
+        if (localStorage.getItem('attr_seen')) attrModal.classList.add('hidden');
+
+        // Theme toggle (wired up properly in Block B, but works standalone now)
+        const html = document.documentElement;
+        const darkCheck = document.getElementById('setting-darkmode');
+        const themeLabel = document.getElementById('theme-label');
+        const iconDark = document.getElementById('theme-icon-dark');
+        const iconLight = document.getElementById('theme-icon-light');
+
+        function applyTheme(dark) {
+            html.setAttribute('data-theme', dark ? 'dark' : 'light');
+            darkCheck.checked = dark;
+            themeLabel.textContent = dark ? 'Dark mode' : 'Light mode';
+            iconDark.style.display = dark ? '' : 'none';
+            iconLight.style.display = dark ? 'none' : '';
+            if (typeof loadThemeColors === 'function') loadThemeColors(dark ? 'dark' : 'light');
+        }
+
+        applyTheme(localStorage.getItem('theme') !== 'light');
+        document.getElementById('btn-theme').addEventListener('click', () => {
+            const isDark = html.getAttribute('data-theme') === 'dark';
+            applyTheme(!isDark);
+            localStorage.setItem('theme', isDark ? 'light' : 'dark');
+            darkCheck.checked = !isDark;
+        });
+        darkCheck.addEventListener('change', () => {
+            applyTheme(darkCheck.checked);
+            localStorage.setItem('theme', darkCheck.checked ? 'dark' : 'light');
+        });
+
+        // Settings open/close
+        const settingsOverlay = document.getElementById('settings-overlay');
+        document.getElementById('btn-settings').addEventListener('click', () => settingsOverlay.classList.add('open'));
+        document.getElementById('btn-settings-close').addEventListener('click', () => settingsOverlay.classList.remove('open'));
+        document.getElementById('settings-blur').addEventListener('click', () => settingsOverlay.classList.remove('open'));
+
+        // Add prompt open/close
+        const addPrompt = document.getElementById('add-prompt');
+        document.getElementById('btn-add').addEventListener('click', () => {
+            addPrompt.classList.add('open');
+            document.getElementById('share-input').focus();
+        });
+        document.getElementById('btn-add-cancel').addEventListener('click', () => addPrompt.classList.remove('open'));
+        document.getElementById('add-prompt-blur').addEventListener('click', () => addPrompt.classList.remove('open'));
+        document.getElementById('share-input').addEventListener('keydown', e => {
+            if (e.key === 'Escape') addPrompt.classList.remove('open');
+            if (e.key === 'Enter') document.getElementById('btn-add-confirm').click();
+        });
+
+
+        // =========================================================================
+        // BLOCK B: State, localStorage, tab management
+        // =========================================================================
+
+        // ---- State ---------------------------------------------------------------
+
+        // state.tabs : [ { id, name, share, chain, ticked, dismissed } ]
+        // chain is null until loaded. ticked = Set of node ids. dismissed = Set of node ids.
+
+        let state = {
+            tabs: [],
+            activeTab: null,   // tab id
+        };
+
+        function saveState() {
+            const serialisable = {
+                tabs: state.tabs.map(t => ({
+                    id: t.id,
+                    name: t.name,
+                    share: t.share,
+                    chain: t.chain,
+                    ticked: [...t.ticked],
+                    dismissed: [...t.dismissed],
+                })),
+                activeTab: state.activeTab,
+            };
+            localStorage.setItem('app_state', JSON.stringify(serialisable));
+        }
+
+        function loadState() {
+            try {
+                const raw = localStorage.getItem('app_state');
+                if (!raw) return;
+                const parsed = JSON.parse(raw);
+                state.tabs = (parsed.tabs || []).map(t => ({
+                    ...t,
+                    ticked: new Set(t.ticked || []),
+                    dismissed: new Set(t.dismissed || []),
+                }));
+                state.activeTab = parsed.activeTab || null;
+            } catch (e) {
+                console.warn('Failed to load state:', e);
+            }
+        }
+
+        function getActiveTab() {
+            return state.tabs.find(t => t.id === state.activeTab) || null;
+        }
+
+        function genId() {
+            return 'tab_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        }
+
+        // ---- API call ------------------------------------------------------------
+
+        async function fetchChain(share) {
+            const res = await fetch('/api/solve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ share }),
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.error || 'Server error ' + res.status);
+            }
+            return res.json();
+        }
+
+        // ---- Sidebar rendering ---------------------------------------------------
+
+        function renderSidebar() {
+            const list = document.getElementById('tab-list');
+            const empty = document.getElementById('tab-empty');
+
+            // Remove old tab items (keep #tab-empty)
+            list.querySelectorAll('.tab-item').forEach(el => el.remove());
+
+            if (state.tabs.length === 0) {
+                empty.style.display = '';
+                document.getElementById('canvas-empty').style.display = '';
+                document.getElementById('canvas').querySelectorAll('.layer-row').forEach(el => el.remove());
+                return;
+            }
+            empty.style.display = 'none';
+
+            state.tabs.forEach((tab, idx) => {
+                const el = document.createElement('div');
+                el.className = 'tab-item' + (tab.id === state.activeTab ? ' active' : '');
+                el.dataset.id = tab.id;
+
+                // Progress
+                let total = 0, done = 0;
+                if (tab.chain) {
+                    tab.chain.nodes.forEach(n => { if (n.kind === 'recipe' || n.kind === 'raw' || n.kind === 'input') { total++; if (tab.ticked.has(n.id)) done++; } });
+                }
+                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+                el.innerHTML = `
+            <div class="tab-header">
+              <span class="tab-name" title="${escHtml(tab.name)}">${escHtml(tab.name)}</span>
+              <div class="tab-actions">
+                <button class="tab-action-btn up"  title="Move up"   data-id="${tab.id}">
+                  <svg viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>
+                </button>
+                <button class="tab-action-btn dn"  title="Move down" data-id="${tab.id}">
+                  <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <button class="tab-action-btn ren" title="Rename"    data-id="${tab.id}">
+                  <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                <button class="tab-action-btn del" title="Delete"    data-id="${tab.id}">
+                  <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="tab-progress">
+              <div class="tab-progress-bar"><div class="tab-progress-fill" style="width:${pct}%"></div></div>
+              <span class="tab-progress-label">${done}/${total}</span>
+            </div>
+          `;
+
+                // Click tab body to switch (but not action buttons)
+                el.addEventListener('click', e => {
+                    if (e.target.closest('.tab-action-btn')) return;
+                    setActiveTab(tab.id);
+                });
+
+                // Action buttons
+                el.querySelector('.up').addEventListener('click', e => { e.stopPropagation(); moveTab(tab.id, -1); });
+                el.querySelector('.dn').addEventListener('click', e => { e.stopPropagation(); moveTab(tab.id, 1); });
+                el.querySelector('.ren').addEventListener('click', e => { e.stopPropagation(); startRename(tab.id, el); });
+                el.querySelector('.del').addEventListener('click', e => { e.stopPropagation(); deleteTab(tab.id); });
+
+                list.appendChild(el);
+            });
+        }
+
+        function escHtml(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // ---- Tab operations ------------------------------------------------------
+
+        function setActiveTab(id) {
+            state.activeTab = id;
+            saveState();
+            renderSidebar();
+            renderChain();
+        }
+
+        function moveTab(id, dir) {
+            const idx = state.tabs.findIndex(t => t.id === id);
+            const newIdx = idx + dir;
+            if (newIdx < 0 || newIdx >= state.tabs.length) return;
+            [state.tabs[idx], state.tabs[newIdx]] = [state.tabs[newIdx], state.tabs[idx]];
+            saveState();
+            renderSidebar();
+        }
+
+        function deleteTab(id) {
+            state.tabs = state.tabs.filter(t => t.id !== id);
+            if (state.activeTab === id) {
+                state.activeTab = state.tabs.length > 0 ? state.tabs[0].id : null;
+            }
+            saveState();
+            renderSidebar();
+            renderChain();
+        }
+
+        function startRename(id, el) {
+            const nameEl = el.querySelector('.tab-name');
+            const tab = state.tabs.find(t => t.id === id);
+            const input = document.createElement('input');
+            input.className = 'tab-name-input';
+            input.value = tab.name;
+            nameEl.replaceWith(input);
+            input.focus();
+            input.select();
+
+            function commit() {
+                const val = input.value.trim() || tab.name;
+                tab.name = val;
+                saveState();
+                renderSidebar();
+            }
+            input.addEventListener('blur', commit);
+            input.addEventListener('keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+                if (e.key === 'Escape') { input.value = tab.name; input.blur(); }
+            });
+        }
+
+        // ---- Add tab flow --------------------------------------------------------
+
+        async function confirmAddTab() {
+            const input = document.getElementById('share-input');
+            const err = document.getElementById('share-error');
+            const btn = document.getElementById('btn-add-confirm');
+            const val = input.value.trim();
+
+            if (!val) {
+                err.textContent = 'Please enter a share URL or code.';
+                err.classList.add('visible');
+                return;
+            }
+            err.classList.remove('visible');
+            btn.classList.add('loading');
+            btn.textContent = 'Loading';
+            btn.disabled = true;
+
+            try {
+                const chain = await fetchChain(val);
+                const tab = {
+                    id: genId(),
+                    name: chain.meta.name || 'Production',
+                    share: val,
+                    chain: chain,
+                    ticked: new Set(),
+                    dismissed: new Set(),
+                };
+                state.tabs.push(tab);
+                state.activeTab = tab.id;
+                saveState();
+                renderSidebar();
+                renderChain();
+                document.getElementById('add-prompt').classList.remove('open');
+                input.value = '';
+            } catch (e) {
+                err.textContent = e.message || 'Failed to load chain.';
+                err.classList.add('visible');
+            } finally {
+                btn.classList.remove('loading');
+                btn.textContent = 'Load chain';
+                btn.disabled = false;
+            }
+        }
+
+
+        // =========================================================================
+        // BLOCK C: Chain rendering, layer reveal, tick logic, byproducts
+        // =========================================================================
+
+        const ICON_BASE = 'https://www.satisfactorytools.com/assets/images/items/';
+
+        function iconUrl(cls) {
+            return ICON_BASE + cls.toLowerCase().replace(/_/g, '-') + '_256.png';
+        }
+
+        function fmtAmt(n) {
+            return parseFloat(n.toFixed(4)).toString();
+        }
+
+        // ---- Visibility logic ----------------------------------------------------
+        // At any time we show: currentLayer and currentLayer-1 (faded).
+        // currentLayer = highest layer index where not all recipes are ticked.
+        // Layers below currentLayer-1 are hidden (splitters only, handled in Block D).
+
+        function getCurrentLayerIdx(tab) {
+            const { chain, ticked, dismissed } = tab;
+            for (let i = 0; i < chain.layers.length; i++) {
+                const layerNodeIds = chain.layers[i];
+                const nodes = layerNodeIds.map(id => chain.nodes.find(n => n.id === id)).filter(Boolean);
+
+                const tickable = nodes.filter(n => n.kind === 'recipe' || n.kind === 'raw' || n.kind === 'input');
+                const dismissible = nodes.filter(n => n.kind === 'byproduct' || n.kind === 'product' || n.kind === 'sink');
+
+                // Layer not complete if any tickable node unticked
+                if (tickable.some(n => !ticked.has(n.id))) return i;
+                // Layer not complete if any byproduct/product/sink not dismissed
+                if (dismissible.some(n => !dismissed.has(n.id))) return i;
+            }
+            return chain.layers.length - 1;
+        }
+
+        function layerComplete(tab, layerIdx) {
+            const { chain, ticked, dismissed } = tab;
+            const ids = chain.layers[layerIdx];
+            const nodes = ids.map(id => chain.nodes.find(n => n.id === id)).filter(Boolean);
+            const tickable = nodes.filter(n => n.kind === 'recipe' || n.kind === 'raw' || n.kind === 'input');
+            const dismissible = nodes.filter(n => n.kind === 'byproduct' || n.kind === 'product' || n.kind === 'sink');
+            return tickable.every(n => ticked.has(n.id)) && dismissible.every(n => dismissed.has(n.id));
+        }
+
+        // ---- Node helpers --------------------------------------------------------
+
+        function nodesById(chain) {
+            const map = {};
+            chain.nodes.forEach(n => { map[n.id] = n; });
+            return map;
+        }
+
+        function edgesTo(chain, nodeId) {
+            return chain.edges.filter(e => e.to_id === nodeId);
+        }
+
+        function edgesFrom(chain, nodeId) {
+            return chain.edges.filter(e => e.from_id === nodeId);
+        }
+
+        // ---- Build a machine card ------------------------------------------------
+
+        function buildCard(tab, node, nodeMap) {
+            const { chain } = tab;
+            const wrap = document.createElement('div');
+            wrap.className = 'card-wrap';
+            wrap.dataset.nodeId = node.id;
+
+            // --- Input labels (left) ---
+            const inputsDiv = document.createElement('div');
+            inputsDiv.className = 'card-io inputs';
+            if (node.kind === 'recipe') {
+                Object.entries(node.inputs).forEach(([item, amt]) => {
+                    const lbl = document.createElement('div');
+                    lbl.className = 'io-label';
+                    const img = document.createElement('img');
+                    img.src = iconUrl(item);
+                    img.alt = item;
+                    img.onerror = () => img.style.display = 'none';
+                    const span = document.createElement('span');
+                    span.innerHTML = `<span class="io-amount">${fmtAmt(amt)}</span>/min`;
+                    const tip = document.createElement('div');
+                    tip.className = 'io-tooltip';
+                    tip.textContent = item.replace(/^Desc_/, '').replace(/_C$/, '').replace(/_/g, ' ');
+                    lbl.appendChild(img);
+                    lbl.appendChild(span);
+                    lbl.appendChild(tip);
+                    inputsDiv.appendChild(lbl);
+                });
+            }
+
+            // --- Card ---
+            const card = document.createElement('div');
+            card.className = 'machine-card' + (tab.ticked.has(node.id) ? ' ticked' : '');
+            card.dataset.nodeId = node.id;
+
+            // Tick indicator
+            const tick = document.createElement('div');
+            tick.className = 'card-tick';
+            tick.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`;
+            card.appendChild(tick);
+
+            // Icon
+            const iconWrap = document.createElement('div');
+            iconWrap.className = 'card-icon';
+            const img = document.createElement('img');
+
+            if (node.kind === 'recipe') {
+                img.src = iconUrl(node.machine);
+            } else if (node.kind === 'splitter') {
+                img.src = iconUrl('Desc_ConveyorAttachmentSplitterSmart_C');
+            } else {
+                img.src = iconUrl(node.item);
+            }
+            img.alt = node.label || '';
+            img.onerror = () => {
+                iconWrap.innerHTML = '<span class="icon-fallback">?</span>';
+            };
+            iconWrap.appendChild(img);
+            card.appendChild(iconWrap);
+
+            // Body
+            const body = document.createElement('div');
+            body.className = 'card-body';
+
+            const title = document.createElement('div');
+            title.className = 'card-title';
+            title.textContent = node.label || node.recipe || node.item || '?';
+            body.appendChild(title);
+
+            if (node.kind === 'recipe') {
+                const machine = document.createElement('div');
+                machine.className = 'card-machine';
+                machine.textContent = node.machine_label || node.machine || '';
+                body.appendChild(machine);
+
+                // Machine count: whole @ 100% + remainder underclocked
+                const countDiv = document.createElement('div');
+                countDiv.className = 'card-count';
+                const whole = Math.floor(node.count);
+                const extra = node.count - whole;
+
+                if (whole > 0) {
+                    const row = document.createElement('div');
+                    row.className = 'count-row';
+                    row.innerHTML = `<span class="count-num">${whole}</span><span class="count-clock">× 100%</span>`;
+                    countDiv.appendChild(row);
+                }
+                if (extra > 0.001) {
+                    const row = document.createElement('div');
+                    row.className = 'count-row';
+                    row.innerHTML = `<span class="count-num">1</span><span class="count-clock">× ${fmtAmt(extra * 100)}%</span>`;
+                    countDiv.appendChild(row);
+                }
+                body.appendChild(countDiv);
+            } else {
+                // Non-recipe: show amount
+                const amt = document.createElement('div');
+                amt.className = 'card-machine';
+                amt.innerHTML = `<span style="color:var(--accent-line);font-weight:600">${fmtAmt(node.amount)}</span>/min`;
+                body.appendChild(amt);
+            }
+
+            card.appendChild(body);
+
+            // --- Output labels (right) ---
+            const outputsDiv = document.createElement('div');
+            outputsDiv.className = 'card-io outputs';
+            if (node.kind === 'recipe') {
+                Object.entries(node.outputs).forEach(([item, amt]) => {
+                    const lbl = document.createElement('div');
+                    lbl.className = 'io-label';
+                    const img = document.createElement('img');
+                    img.src = iconUrl(item);
+                    img.alt = item;
+                    img.onerror = () => img.style.display = 'none';
+                    const span = document.createElement('span');
+                    span.innerHTML = `<span class="io-amount">${fmtAmt(amt)}</span>/min`;
+                    const tip = document.createElement('div');
+                    tip.className = 'io-tooltip';
+                    tip.textContent = item.replace(/^Desc_/, '').replace(/_C$/, '').replace(/_/g, ' ');
+                    lbl.appendChild(img);
+                    lbl.appendChild(span);
+                    lbl.appendChild(tip);
+                    outputsDiv.appendChild(lbl);
+                });
+            }
+
+            // --- Click to tick ---
+            if (node.kind === 'recipe' || node.kind === 'raw' || node.kind === 'input') {
+                card.addEventListener('click', () => toggleTick(tab, node.id));
+            } else if (node.kind === 'byproduct' || node.kind === 'product') {
+                card.classList.add('dismiss-card');
+                card.classList.add(node.kind);
+                card.title = 'Click to dismiss';
+                card.addEventListener('click', () => dismissNode(tab, node.id));
+            }
+
+            wrap.appendChild(inputsDiv);
+            wrap.appendChild(card);
+            wrap.appendChild(outputsDiv);
+            return wrap;
+        }
+
+        // ---- Tick / dismiss ------------------------------------------------------
+
+        function toggleTick(tab, nodeId) {
+            if (tab.ticked.has(nodeId)) {
+                tab.ticked.delete(nodeId);
+            } else {
+                tab.ticked.add(nodeId);
+            }
+            saveState();
+            renderChain();
+            renderSidebar(); // update progress bar
+        }
+
+        function dismissNode(tab, nodeId) {
+            tab.dismissed.add(nodeId);
+            saveState();
+            renderChain();
+        }
+
+        // ---- Main render ---------------------------------------------------------
+
+        function renderChain() {
+            const tab = getActiveTab();
+            const canvas = document.getElementById('canvas');
+            const empty = document.getElementById('canvas-empty');
+
+            canvas.querySelectorAll('.layer-row, .chain-placeholder').forEach(el => el.remove());
+
+            if (!tab || !tab.chain) {
+                empty.style.display = '';
+                return;
+            }
+            empty.style.display = 'none';
+
+            const { chain } = tab;
+            const nodeMap = nodesById(chain);
+            const curIdx = getCurrentLayerIdx(tab);
+            const allDone = tab.ticked.size > 0 && chain.layers.every((ids, i) => layerComplete(tab, i));
+            const lineSvg = document.getElementById('line-svg');
+            lineSvg.innerHTML = '';
+
+            chain.layers.forEach((layerNodeIds, layerIdx) => {
+                // Visibility:
+                // - hidden:  more than 1 behind current (unless allDone)
+                // - faded:   exactly 1 behind current
+                // - visible: current or later (if allDone)
+                const isCurrent = layerIdx === curIdx;
+                const isFaded = !allDone && layerIdx === curIdx - 1;
+                const isHidden = !allDone && layerIdx < curIdx - 1;
+                const isFuture = layerIdx > curIdx;
+
+                const row = document.createElement('div');
+                row.className = 'layer-row';
+                row.dataset.layerIdx = layerIdx;
+
+                if (isHidden) row.classList.add('hidden');
+                if (isFaded) row.classList.add('faded');
+                if (isFuture && !allDone) {
+                    row.classList.add('hidden');
+                }
+
+                // Layer label
+                const label = document.createElement('div');
+                label.className = 'layer-label';
+                label.textContent = layerIdx === 0
+                    ? 'Layer 0 — Raw inputs'
+                    : `Layer ${layerIdx}`;
+                row.appendChild(label);
+
+                // Cards
+                const cardsDiv = document.createElement('div');
+                cardsDiv.className = 'layer-cards';
+
+                layerNodeIds.forEach(nodeId => {
+                    const node = nodeMap[nodeId];
+                    if (!node) return;
+
+                    // Skip dismissed
+                    if (tab.dismissed.has(nodeId)) return;
+
+                    // Byproducts and products: dismissible cards
+                    if (node.kind === 'byproduct' || node.kind === 'product' || node.kind === 'sink') {
+                        if (isCurrent || allDone) {
+                            const wrap = document.createElement('div');
+                            wrap.className = `dismiss-card ${node.kind}`;
+                            wrap.dataset.nodeId = nodeId;
+                            wrap.title = 'Click to acknowledge';
+
+                            const img = document.createElement('img');
+                            img.src = iconUrl(node.item);
+                            img.alt = node.label;
+                            img.onerror = () => img.style.display = 'none';
+
+                            const text = document.createElement('div');
+                            text.className = 'dismiss-card-text';
+                            text.innerHTML = `
+                  <div class="dismiss-card-name">${escHtml(node.label)}</div>
+                  <div class="dismiss-card-sub">${fmtAmt(node.amount)}/min</div>
+                `;
+                            const hint = document.createElement('div');
+                            hint.className = 'dismiss-card-hint';
+                            hint.textContent = node.kind === 'byproduct' ? 'byproduct ×' : node.kind === 'product' ? 'output ✓' : 'sink';
+
+                            wrap.appendChild(img);
+                            wrap.appendChild(text);
+                            wrap.appendChild(hint);
+                            wrap.addEventListener('click', () => dismissNode(tab, nodeId));
+                            cardsDiv.appendChild(wrap);
+                        }
+                        return;
+                    }
+
+                    // Raw / input / recipe cards
+                    cardsDiv.appendChild(buildCard(tab, node, nodeMap));
+                });
+
+                row.appendChild(cardsDiv);
+                canvas.insertBefore(row, lineSvg);
+            });
+        }
+
+
+
+        // =========================================================================
+        // BLOCK D: SVG line drawing, splitter placement, zoom & pan
+        // =========================================================================
+
+        // ---- Zoom & pan ----------------------------------------------------------
+
+        let _scale = 1;
+        let _panX = 0;
+        let _panY = 0;
+        let _panning = false;
+        let _panStart = { x: 0, y: 0 };
+
+        const canvasWrap = document.getElementById('canvas-wrap');
+        const canvas = document.getElementById('canvas');
+
+        canvasWrap.addEventListener('wheel', e => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            const newScale = Math.min(2, Math.max(0.2, _scale * delta));
+
+            // Zoom toward cursor
+            const rect = canvasWrap.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            _panX = mx - (mx - _panX) * (newScale / _scale);
+            _panY = my - (my - _panY) * (newScale / _scale);
+            _scale = newScale;
+            applyTransform();
+        }, { passive: false });
+
+        canvasWrap.addEventListener('mousedown', e => {
+            if (e.button !== 1 && e.button !== 0) return;
+            // Only pan on middle-click or when not clicking a card
+            if (e.button === 0 && e.target.closest('.machine-card, .dismiss-card, .tab-action-btn')) return;
+            _panning = true;
+            _panStart = { x: e.clientX - _panX, y: e.clientY - _panY };
+            canvasWrap.style.cursor = 'grabbing';
+            e.preventDefault();
+        });
+
+        window.addEventListener('mousemove', e => {
+            if (!_panning) return;
+            _panX = e.clientX - _panStart.x;
+            _panY = e.clientY - _panStart.y;
+            applyTransform();
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (!_panning) return;
+            _panning = false;
+            canvasWrap.style.cursor = '';
+        });
+
+        canvasWrap.addEventListener('dblclick', e => {
+            if (e.target.closest('.machine-card, .dismiss-card')) return;
+            _scale = 1; _panX = 0; _panY = 0;
+            applyTransform();
+        });
+
+        function applyTransform() {
+            canvas.style.transform = `translate(${_panX}px, ${_panY}px) scale(${_scale})`;
+            drawLines();
+        }
+
+        // ---- Line drawing --------------------------------------------------------
+        // Lines are drawn AFTER layout so we can use getBoundingClientRect.
+        // We draw from the right edge of the source card-wrap to the left edge of
+        // the destination card-wrap, routing through a splitter dot if the source
+        // fans out to multiple destinations.
+
+        const lineSvg = document.getElementById('line-svg');
+
+        // Map of item -> list of destination card-wrap elements that need it
+        // Built fresh each drawLines() call from current DOM state.
+
+        function getCardWrapEl(nodeId) {
+            return canvas.querySelector(`.card-wrap[data-node-id="${nodeId}"]`);
+        }
+
+        function svgPoint(el, side) {
+            // Returns {x, y} in canvasWrap coordinate space
+            const wrapRect = canvasWrap.getBoundingClientRect();
+            const elRect = el.getBoundingClientRect();
+            const x = side === 'right'
+                ? (elRect.right - wrapRect.left - _panX) / _scale
+                : (elRect.left - wrapRect.left - _panX) / _scale;
+            const y = (elRect.top + elRect.height / 2 - wrapRect.top - _panY) / _scale;
+            return { x, y };
+        }
+
+        function drawLines() {
+            const tab = getActiveTab();
+            lineSvg.innerHTML = '';
+            if (!tab || !tab.chain) return;
+
+            const { chain } = tab;
+            const wrapRect = canvasWrap.getBoundingClientRect();
+
+            // Collect all card icon rects for occlusion testing
+            const allIconRects = [];
+            canvas.querySelectorAll('.card-icon').forEach(el => {
+                const r = el.getBoundingClientRect();
+                allIconRects.push({
+                    left: (r.left - wrapRect.left - _panX) / _scale,
+                    right: (r.right - wrapRect.left - _panX) / _scale,
+                    top: (r.top - wrapRect.top - _panY) / _scale,
+                    bottom: (r.bottom - wrapRect.top - _panY) / _scale,
+                });
+            });
+
+            // Only draw edges where both endpoints are visible
+            const edgesByFrom = {};
+            chain.edges.forEach(e => {
+                const fromEl = getCardWrapEl(e.from_id);
+                const toEl = getCardWrapEl(e.to_id);
+                if (!fromEl || !toEl) return;
+                if (fromEl.closest('.layer-row.hidden') || toEl.closest('.layer-row.hidden')) return;
+                if (!edgesByFrom[e.from_id]) edgesByFrom[e.from_id] = [];
+                edgesByFrom[e.from_id].push({ ...e, fromEl, toEl });
+            });
+
+            Object.entries(edgesByFrom).forEach(([fromId, edges]) => {
+                const byItem = {};
+                edges.forEach(e => {
+                    if (!byItem[e.item]) byItem[e.item] = [];
+                    byItem[e.item].push(e);
+                });
+
+                Object.entries(byItem).forEach(([item, itemEdges]) => {
+                    const fromIcon = itemEdges[0].fromEl.querySelector('.card-icon');
+                    if (!fromIcon) return;
+                    const src = iconEdgePoint(fromIcon, 'right');
+
+                    // Lane index within all items leaving this source
+                    const allItems = Object.keys(byItem);
+                    const itemIdx = allItems.indexOf(item);
+                    const itemsTotal = allItems.length;
+
+                    if (itemEdges.length === 1) {
+                        const toIcon = itemEdges[0].toEl.querySelector('.card-icon');
+                        if (!toIcon) return;
+                        const dst = iconEdgePoint(toIcon, 'left');
+                        drawFadeCurve(src, dst, itemEdges[0].amount, allIconRects, false, itemIdx, itemsTotal);
+                    } else {
+                        // Splitter: place it halfway between src and leftmost dst, vertically centred
+                        const toIcons = itemEdges.map(e => e.toEl.querySelector('.card-icon')).filter(Boolean);
+                        const dsts = toIcons.map(el => iconEdgePoint(el, 'left'));
+                        const minX = Math.min(...dsts.map(d => d.x));
+                        const ctrY = dsts.reduce((s, d) => s + d.y, 0) / dsts.length;
+                        const split = { x: (src.x + minX) / 2, y: (src.y + ctrY) / 2 };
+
+                        drawFadeCurve(src, split, itemEdges.reduce((s, e) => s + e.amount, 0), allIconRects, false, 0, 1);
+                        drawSplitterDot(split);
+                        dsts.forEach((dst, i) => {
+                            drawFadeCurve(split, dst, itemEdges[i].amount, allIconRects, true, i, dsts.length);
+                        });
+                    }
+                });
+            });
+        }
+
+        // Get the centre-left or centre-right point of a .card-icon element
+        function iconEdgePoint(iconEl, side) {
+            const wrapRect = canvasWrap.getBoundingClientRect();
+            const r = iconEl.getBoundingClientRect();
+            return {
+                x: side === 'right'
+                    ? (r.right - wrapRect.left - _panX) / _scale
+                    : (r.left - wrapRect.left - _panX) / _scale,
+                y: (r.top + r.height / 2 - wrapRect.top - _panY) / _scale,
+            };
+        }
+
+        // Draw a cubic bezier with lane offset so parallel lines don't overlap.
+        // laneIdx / laneTotal: position among sibling lines sharing the same source.
+        // Lines that nearly connect (small dy) get minimal offset; long-distance ones get more.
+        function drawFadeCurve(from, to, amount, iconRects, fromSplitter = false, laneIdx = 0, laneTotal = 1) {
+            const line = getComputedStyle(document.documentElement).getPropertyValue('--accent-line').trim();
+            const sec = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim();
+
+            const dx = Math.max(60, Math.abs(to.x - from.x) * 0.55);
+            const dy = Math.abs(to.y - from.y);
+
+            // Padding: scales with distance, but shrinks toward 0 when src and dst are nearly level.
+            // Max 14px spread, zero when dy < 10px.
+            const maxSpread = 14;
+            const proximity = Math.max(0, 1 - dy / 80);   // 1 = very close, 0 = far apart
+            const spread = maxSpread * (1 - proximity);
+
+            // Centre the bundle around the natural midpoint
+            const offset = laneTotal > 1
+                ? (laneIdx - (laneTotal - 1) / 2) * spread
+                : 0;
+
+            const fy = from.y + offset;
+            const ty = to.y + offset;
+
+            const d = `M ${from.x} ${fy} C ${from.x + dx} ${fy}, ${to.x - dx} ${ty}, ${to.x} ${ty}`;
+
+            // Occlusion check at midpoint
+            const mx = (from.x + to.x) / 2;
+            const my = (fy + ty) / 2;
+            const occluded = iconRects.some(r =>
+                mx >= r.left - 8 && mx <= r.right + 8 && my >= r.top - 8 && my <= r.bottom + 8
+            );
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', d);
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke', line);
+            path.setAttribute('stroke-width', '1.5');
+            path.setAttribute('opacity', occluded ? '0.15' : '0.6');
+            if (occluded) path.setAttribute('stroke-dasharray', '4 4');
+            lineSvg.appendChild(path);
+
+            // Amount label at curve midpoint, only when not occluded
+            if (!occluded) {
+                const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                label.setAttribute('x', mx);
+                label.setAttribute('y', my - 6);
+                label.setAttribute('text-anchor', 'middle');
+                label.setAttribute('font-size', '10');
+                label.setAttribute('font-family', 'JetBrains Mono, monospace');
+                label.setAttribute('fill', sec);
+                label.setAttribute('opacity', '0.75');
+                label.textContent = fmtAmt(amount) + '/min';
+                lineSvg.appendChild(label);
+            }
+        }
+
+        function drawSplitterDot(pos) {
+            const size = 18;
+            const img = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+            img.setAttribute('href', iconUrl('Desc_ConveyorAttachmentSplitterSmart_C'));
+            img.setAttribute('x', pos.x - size / 2);
+            img.setAttribute('y', pos.y - size / 2);
+            img.setAttribute('width', size);
+            img.setAttribute('height', size);
+            img.setAttribute('opacity', '0.9');
+            lineSvg.appendChild(img);
+        }
+
+        // Redraw lines after layout settles and on resize
+        function scheduleDrawLines() {
+            requestAnimationFrame(() => requestAnimationFrame(drawLines));
+        }
+
+        window.addEventListener('resize', scheduleDrawLines);
+
+        // Patch renderChain to trigger line drawing after DOM updates
+        const _origRenderChain = renderChain;
+        renderChain = function () {
+            _origRenderChain();
+            scheduleDrawLines();
+        };
+
+        // Initial draw
+        scheduleDrawLines();
+
+        // ---- Init ----------------------------------------------------------------
+
+        loadState();
+        renderSidebar();
+        renderChain();
+
+        // Wire confirm button to real handler (replaces the Block A stub)
+        document.getElementById('btn-add-confirm').removeEventListener('click', () => { });
+        document.getElementById('btn-add-confirm').addEventListener('click', confirmAddTab);
+        document.getElementById('share-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') confirmAddTab();
+        });
+
+    </script>
+</body>
+</html>
