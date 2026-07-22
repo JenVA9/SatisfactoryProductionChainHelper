@@ -295,36 +295,88 @@ def _build_graph(solver_result: dict, data: dict) -> tuple:
     return nodes, edges
 
 
+def _cycle_edges(nodes: list, edges: list) -> set:
+    """
+    Return the set of (from_id, to_id) edges that are part of some cycle.
+
+    An edge u→v lies on a cycle iff v can reach u by following other edges
+    (i.e. u and v belong to the same strongly connected component). Complex
+    chains (Diluted Fuel + recycled rubber/plastic + the alumina/scrap loop)
+    routinely contain cycles of three or more nodes, so a simple "is the
+    reverse edge present?" test is not enough — we need true reachability.
+    """
+    from collections import deque
+
+    succ: dict = {n["id"]: [] for n in nodes}
+    for e in edges:
+        succ[e["from_id"]].append(e["to_id"])
+
+    reach_cache: dict = {}
+
+    def reachable_from(start):
+        cached = reach_cache.get(start)
+        if cached is not None:
+            return cached
+        seen = set()
+        dq = deque(succ[start])
+        while dq:
+            x = dq.popleft()
+            if x in seen:
+                continue
+            seen.add(x)
+            dq.extend(succ[x])
+        reach_cache[start] = seen
+        return seen
+
+    # u→v is a cycle edge iff v can reach back to u.
+    return {
+        (e["from_id"], e["to_id"])
+        for e in edges
+        if e["from_id"] in reachable_from(e["to_id"])
+    }
+
+
 def _repair_layer_violations(nodes: list, edges: list, layers: list) -> list:
     """
     Post-processing pass: ensure every node appears in a later layer than all
-    its non-cycle predecessors.
+    its non-cycle predecessors, so all production of an item comes before the
+    step that consumes it (and outputs land dead last).
 
     Kahn's cycle-breaker picks the node with the fewest remaining deps, but a
     node that is merely *downstream* of a cycle (e.g. waiting for one cycle node)
-    can tie with the actual cycle participants and get placed too early.  This
-    pass corrects any such violations by iteratively pushing nodes to later
-    layers until layer(A) < layer(B) holds for every non-cycle edge A→B.
+    can tie with the actual cycle participants and get placed too early. This
+    pass corrects any such violations by pushing nodes to later layers until
+    layer(A) < layer(B) holds for every non-cycle edge A→B.
 
-    Cycle edges (both A→B and B→A present) are skipped — Kahn's ordering is
-    trusted for those.
+    Only edges that are NOT part of a cycle are enforced. Those remaining edges
+    form a DAG (the condensation of the graph), so the relaxation is guaranteed
+    to terminate — enforcing a cycle edge would push its endpoints later forever.
     """
     id_to_node = {n["id"]: n for n in nodes}
-    node_layer  = {n["id"]: i for i, layer in enumerate(layers) for n in layer}
-    edge_set    = {(e["from_id"], e["to_id"]) for e in edges}
+    node_layer = {n["id"]: i for i, layer in enumerate(layers) for n in layer}
 
+    cyc = _cycle_edges(nodes, edges)
+    dag_edges = [
+        (e["from_id"], e["to_id"])
+        for e in edges
+        if (e["from_id"], e["to_id"]) not in cyc
+    ]
+
+    # Longest-path relaxation over the DAG edges. Converges in at most one pass
+    # per node; the guard is a belt-and-braces cap so a malformed graph can
+    # never hang the request.
+    guard = 0
+    limit = len(nodes) + 5
     changed = True
-    while changed:
+    while changed and guard < limit:
         changed = False
-        for e in edges:
-            fid, tid = e["from_id"], e["to_id"]
-            if (tid, fid) in edge_set:           # cycle edge — skip
-                continue
-            if node_layer.get(fid, 0) >= node_layer.get(tid, 0):
+        guard += 1
+        for fid, tid in dag_edges:
+            if node_layer[fid] >= node_layer[tid]:
                 node_layer[tid] = node_layer[fid] + 1
                 changed = True
 
-    max_layer  = max(node_layer.values(), default=-1)
+    max_layer = max(node_layer.values(), default=-1)
     new_layers: list = [[] for _ in range(max_layer + 1)]
     for nid, li in node_layer.items():
         new_layers[li].append(id_to_node[nid])
