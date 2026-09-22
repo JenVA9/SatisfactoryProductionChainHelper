@@ -336,6 +336,33 @@ def _cycle_edges(nodes: list, edges: list) -> set:
     }
 
 
+def _cycle_groups(nodes: list, cyc: set) -> list:
+    """
+    Connected groups of nodes joined by cycle edges — i.e. the loops.
+    Each group is a set of node ids that should share a build layer.
+    """
+    adj: dict = {}
+    for u, v in cyc:
+        adj.setdefault(u, set()).add(v)
+        adj.setdefault(v, set()).add(u)
+
+    seen, groups = set(), []
+    for start in adj:
+        if start in seen:
+            continue
+        stack, group = [start], set()
+        while stack:
+            x = stack.pop()
+            if x in seen:
+                continue
+            seen.add(x)
+            group.add(x)
+            stack.extend(adj[x] - seen)
+        if len(group) > 1:
+            groups.append(group)
+    return groups
+
+
 def _repair_layer_violations(nodes: list, edges: list, layers: list) -> list:
     """
     Post-processing pass: ensure every node appears in a later layer than all
@@ -362,7 +389,16 @@ def _repair_layer_violations(nodes: list, edges: list, layers: list) -> list:
         if (e["from_id"], e["to_id"]) not in cyc
     ]
 
-    # Longest-path relaxation over the DAG edges. Converges in at most one pass
+    # Nodes that feed each other in a loop (Alumina Solution <-> Aluminum
+    # Scrap, Recycled Rubber <-> Recycled Plastic) have no meaningful build
+    # order between them - you have to stand both up together before either
+    # runs. Group them so they share a layer rather than being strung across
+    # consecutive ones.
+    groups = _cycle_groups(nodes, cyc)
+
+    # Longest-path relaxation over the DAG edges, then pull each loop group
+    # onto a common layer. Re-running the relaxation afterwards keeps anything
+    # downstream of a group correctly behind it. Converges in at most one pass
     # per node; the guard is a belt-and-braces cap so a malformed graph can
     # never hang the request.
     guard = 0
@@ -375,6 +411,34 @@ def _repair_layer_violations(nodes: list, edges: list, layers: list) -> list:
             if node_layer[fid] >= node_layer[tid]:
                 node_layer[tid] = node_layer[fid] + 1
                 changed = True
+        for group in groups:
+            top = max(node_layer[nid] for nid in group)
+            for nid in group:
+                if node_layer[nid] != top:
+                    node_layer[nid] = top
+                    changed = True
+
+    # Recipes that take no ingredients (Excited Photonic Matter is the only one
+    # in the base game) are deliberately placed just before whatever consumes
+    # them rather than sitting in layer 0 with the ores. The relaxation above
+    # only ever pushes nodes later, so it moves their consumers down the chain
+    # and leaves the producer stranded - the connecting line then spans half the
+    # factory and, with layers hidden, appears to go nowhere.
+    #
+    # Re-anchor them to just before their earliest consumer.
+    out_of = {}
+    in_of = {}
+    for e in edges:
+        out_of.setdefault(e["from_id"], set()).add(e["to_id"])
+        in_of.setdefault(e["to_id"], set()).add(e["from_id"])
+    for nid, node in id_to_node.items():
+        if node.get("kind") != "recipe" or in_of.get(nid):
+            continue
+        consumers = out_of.get(nid)
+        if not consumers:
+            continue
+        earliest = min(node_layer[c] for c in consumers)
+        node_layer[nid] = max(0, earliest - 1)
 
     max_layer = max(node_layer.values(), default=-1)
     new_layers: list = [[] for _ in range(max_layer + 1)]

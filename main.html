@@ -530,6 +530,12 @@
                  }
 
              .io-label {
+                 /* `position: relative` anchors the hover tooltip here, and the
+                    overflow has to stay visible or the tooltip - which sits
+                    above the label - gets clipped away. Without these two the
+                    name on hover never appeared at all. The text clipping that
+                    `overflow: hidden` used to do now lives on the inner span. */
+                 position: relative;
                  display: flex;
                  align-items: center;
                  gap: 5px;
@@ -542,8 +548,14 @@
                  color: var(--text-secondary);
                  white-space: nowrap;
                  max-width: 120px;
-                 overflow: hidden;
+                 overflow: visible;
              }
+             .io-label > span {
+                 overflow: hidden;
+                 text-overflow: ellipsis;
+                 min-width: 0;
+             }
+             .io-label > .io-tooltip { overflow: visible; text-overflow: clip; }
 
                  .io-label img {
                      width: 14px;
@@ -1091,6 +1103,356 @@
         Add tab prompt (inline in main area)
         ========================================================================== */
 
+             /* ---- Segmented control (shared) ---- */
+             .seg {
+                 display: flex;
+                 gap: 4px;
+                 background: var(--bg-base);
+                 border: 1px solid var(--border);
+                 border-radius: 8px;
+                 padding: 3px;
+             }
+             .seg.seg-wrap { flex-wrap: wrap; }
+             .seg-btn {
+                 flex: 1 1 auto;
+                 min-width: 0;
+                 padding: 6px 10px;
+                 font-size: 12px;
+                 font-family: inherit;
+                 color: var(--text-secondary);
+                 background: transparent;
+                 border: 0;
+                 border-radius: 6px;
+                 cursor: pointer;
+                 white-space: nowrap;
+                 transition: background .15s, color .15s;
+             }
+             .seg-btn:hover { color: var(--text-primary); }
+             .seg-btn.active {
+                 background: var(--accent-button);
+                 color: #fff;
+             }
+
+             /* ---- Calculator panel ---- */
+             #calc-panel {
+                 position: fixed;
+                 top: 0; right: 0;
+                 width: 380px;
+                 max-width: 92vw;
+                 height: 100%;
+                 background: var(--bg-raised);
+                 border-left: 1px solid var(--border);
+                 display: flex;
+                 flex-direction: column;
+                 transform: translateX(102%);
+                 transition: transform .22s ease;
+                 z-index: 60;
+                 box-shadow: -10px 0 30px rgba(0,0,0,.28);
+             }
+             #calc-panel.open { transform: translateX(0); }
+             #calc-panel-head {
+                 display: flex;
+                 align-items: center;
+                 justify-content: space-between;
+                 padding: 14px 16px;
+                 border-bottom: 1px solid var(--border);
+                 flex-shrink: 0;
+             }
+             #calc-panel-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+             #calc-panel-body { flex: 1; overflow-y: auto; padding: 4px 16px 16px; }
+             #calc-panel-foot {
+                 flex-shrink: 0;
+                 padding: 12px 16px;
+                 border-top: 1px solid var(--border);
+                 display: flex;
+                 flex-direction: column;
+                 gap: 8px;
+             }
+             #calc-foot-actions {
+                 display: flex;
+                 align-items: center;
+                 gap: 8px;
+                 justify-content: flex-end;
+             }
+             /* The report sits under the buttons and is free to wrap onto as
+                many lines as it needs; the panel footer grows upwards with it
+                rather than clipping the text. */
+             #calc-foot-report {
+                 min-width: 0;
+                 max-height: 34vh;
+                 overflow-y: auto;
+             }
+             #calc-foot-report #calc-preview { line-height: 1.5; word-break: break-word; }
+             .calc-sec { padding: 14px 0; border-bottom: 1px solid var(--border); }
+             .calc-sec:last-child { border-bottom: 0; }
+             .calc-sec h4 {
+                 margin: 0 0 8px;
+                 font-size: 12px;
+                 font-weight: 600;
+                 text-transform: uppercase;
+                 letter-spacing: .04em;
+                 color: var(--text-secondary);
+             }
+             .calc-hint {
+                 margin: 6px 0 0;
+                 font-size: 11px;
+                 line-height: 1.5;
+                 color: var(--text-secondary);
+                 text-transform: none;
+                 letter-spacing: 0;
+                 font-weight: 400;
+             }
+             .calc-warn { color: #f0a94c; }
+             .calc-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+             .calc-row input[type=text], .calc-row input[type=number] {
+                 flex: 1; min-width: 0;
+                 padding: 7px 10px;
+                 font-size: 12px;
+                 font-family: inherit;
+                 color: var(--text-primary);
+                 background: var(--bg-base);
+                 border: 1px solid var(--border);
+                 border-radius: 7px;
+                 outline: none;
+             }
+             .calc-row input:focus { border-color: var(--accent-line); }
+             .calc-file { cursor: pointer; display: inline-flex; align-items: center; }
+
+             /* target rows */
+             .tgt {
+                 display: flex; align-items: center; gap: 7px;
+                 padding: 7px 8px; margin-bottom: 6px;
+                 background: var(--bg-base);
+                 border: 1px solid var(--border);
+                 border-radius: 8px;
+             }
+             .tgt.dragging { opacity: .45; }
+             .tgt.drop-target { border-color: var(--accent-line); }
+             .tgt-grip { cursor: grab; color: var(--text-secondary); flex-shrink: 0; display: flex; }
+             .tgt-grip svg { width: 13px; height: 13px; }
+             .tgt-icon { width: 20px; height: 20px; flex-shrink: 0; object-fit: contain; }
+             .tgt-name {
+                 flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary);
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+             }
+             .tgt-amt {
+                 width: 66px; flex-shrink: 0;
+                 padding: 4px 6px; font-size: 11px; font-family: inherit;
+                 color: var(--text-primary); background: var(--bg-raised);
+                 border: 1px solid var(--border); border-radius: 6px; outline: none;
+             }
+             .tgt-amt:disabled { opacity: .35; }
+             .tgt-mode {
+                 flex-shrink: 0; font-size: 10px; padding: 4px 7px;
+                 border-radius: 6px; cursor: pointer; font-family: inherit;
+                 border: 1px solid var(--border);
+                 background: var(--bg-raised); color: var(--text-secondary);
+             }
+             .tgt-mode.max { background: var(--accent-button); color: #fff; border-color: transparent; }
+             .tgt-del {
+                 flex-shrink: 0; cursor: pointer; background: none; border: 0;
+                 color: var(--text-secondary); display: flex; padding: 2px;
+             }
+             .tgt-del:hover { color: #ef4444; }
+             .tgt-del svg { width: 13px; height: 13px; }
+
+             /* search results + recipe list */
+             #calc-item-results, #calc-recipe-list {
+                 max-height: 210px; overflow-y: auto; margin-top: 8px;
+             }
+             #calc-recipe-list { max-height: 260px; }
+             .res-item {
+                 display: flex; align-items: center; gap: 8px;
+                 padding: 6px 8px; border-radius: 7px; cursor: pointer;
+                 font-size: 12px; color: var(--text-primary);
+             }
+             .res-item:hover { background: var(--bg-base); }
+             .res-item img { width: 18px; height: 18px; object-fit: contain; }
+             .rcp {
+                 display: flex; align-items: center; gap: 8px;
+                 padding: 5px 8px; font-size: 11.5px; color: var(--text-primary);
+                 border-radius: 6px;
+             }
+             .rcp:hover { background: var(--bg-base); }
+             .rcp input { accent-color: var(--accent-button); flex-shrink: 0; }
+             .rcp label { flex: 1; min-width: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+             .rcp .alt-badge {
+                 font-size: 9px; padding: 1px 5px; border-radius: 4px;
+                 background: var(--accent-button); color: #fff; flex-shrink: 0;
+             }
+             .rcp.locked label { opacity: .45; }
+
+             /* Full-chain view: everything on screen at once, with the
+                already-done work dimmed so progress still reads at a glance. */
+             .layer-row.fullview .machine-card:not(.ticked),
+             .layer-row.fullview .dismiss-card:not(.done) {
+                 opacity: 1;
+             }
+             .dismiss-card.done {
+                 opacity: 0.4;
+                 filter: grayscale(0.7);
+             }
+             .dismiss-card.done:hover { opacity: 0.75; }
+             .layer-label.here::after {
+                 content: 'you are here';
+                 margin-left: 8px;
+                 padding: 2px 7px;
+                 border-radius: 5px;
+                 font-size: 9px;
+                 letter-spacing: .04em;
+                 text-transform: uppercase;
+                 background: var(--accent-button);
+                 color: #fff;
+                 vertical-align: middle;
+             }
+
+             .prio {
+                 display: flex; align-items: center; gap: 8px;
+                 padding: 6px 8px; margin-bottom: 5px;
+                 background: var(--bg-base);
+                 border: 1px solid var(--border);
+                 border-radius: 8px;
+                 font-size: 12px; color: var(--text-primary);
+                 cursor: grab;
+             }
+             .prio.dragging { opacity: .45; }
+             .prio.drop-target { border-color: var(--accent-line); }
+             .prio.goal {
+                 border-color: transparent;
+                 background: var(--accent-button);
+                 color: #fff;
+             }
+             .prio .rank {
+                 width: 18px; flex-shrink: 0; text-align: center;
+                 font-size: 10px; opacity: .8;
+             }
+             .prio .grip { display: flex; flex-shrink: 0; opacity: .7; }
+             .prio .grip svg { width: 12px; height: 12px; }
+             .prio .who { flex: 1; min-width: 0; }
+             .prio .tag {
+                 font-size: 9px; text-transform: uppercase; letter-spacing: .04em;
+                 opacity: .85; flex-shrink: 0;
+             }
+
+             /* Two phases, two colours: green while the file is going up, blue
+                while the server is picking the world apart. */
+             #world-progress { margin-top: 8px; }
+             .wp-bar {
+                 height: 6px;
+                 border-radius: 4px;
+                 overflow: hidden;
+                 background: var(--bg-base);
+                 border: 1px solid var(--border);
+             }
+             .wp-bar > i {
+                 display: block;
+                 height: 100%;
+                 width: 0%;
+                 border-radius: 3px;
+                 background: linear-gradient(90deg, #1f9d55, #3ddc84);
+             }
+             .wp-bar.extracting > i {
+                 background: linear-gradient(90deg, #1668c4, #34b3ff);
+             }
+
+             .btn-ultra {
+                 background: linear-gradient(135deg, #b3122b, #e0403f);
+                 color: #fff;
+                 border: 1px solid #ff6b6b40;
+                 box-shadow: 0 0 10px #e0403f45;
+             }
+             .btn-ultra:hover { filter: brightness(1.12); }
+             .btn-ultra:disabled { opacity: .55; filter: none; }
+             #calc-ultra-wrap { display: none; align-items: center; gap: 8px; }
+             #calc-ultra-wrap.on { display: flex; }
+             /* How many resources ULTRA may ban at once. Cost is exponential,
+                so the choice is colour-coded: safe, costly, punishing. */
+             #calc-depth-pick { display: inline-flex; align-items: center; gap: 3px; }
+             #calc-depth-pick .dp-label {
+                 font-size: 10px;
+                 letter-spacing: .06em;
+                 text-transform: uppercase;
+                 color: var(--text-dim);
+                 margin-right: 3px;
+             }
+             #calc-depth-pick .dp {
+                 min-width: 22px;
+                 padding: 3px 0;
+                 font: inherit;
+                 font-size: 11px;
+                 line-height: 1;
+                 cursor: pointer;
+                 border-radius: 4px;
+                 color: var(--text-secondary);
+                 background: var(--bg-base);
+                 border: 1px solid var(--border);
+             }
+             #calc-depth-pick .dp:hover { border-color: var(--border-bright); }
+             #calc-depth-pick .dp.on { color: #fff; font-weight: 600; }
+             #calc-depth-pick .dp.on[data-depth="3"] {
+                 background: #1f9d55; border-color: #3ddc84;
+             }
+             #calc-depth-pick .dp.on[data-depth="4"] {
+                 background: #b8700f; border-color: #f0a94c;
+             }
+             #calc-depth-pick .dp.on[data-depth="5"] {
+                 background: #b3122b; border-color: #ff6b6b;
+             }
+             #calc-ultra-note.danger { color: #f08c8c; }
+
+             #ultra-bar {
+                 height: 4px; border-radius: 3px; overflow: hidden;
+                 background: var(--bg-base); border: 1px solid var(--border);
+                 margin-top: 6px;
+             }
+             #ultra-bar > i {
+                 display: block; height: 100%; width: 0%;
+                 background: linear-gradient(90deg, #b3122b, #e0403f);
+                 transition: width .25s ease;
+             }
+
+             /* Leftovers are reported in place, on the machine that makes them,
+                rather than as a card you have to click away. "Easiest" can leave
+                a whole handful of tiny ones and dismissing each was busywork. */
+             .byproduct-strip {
+                 display: flex;
+                 flex-wrap: wrap;
+                 align-items: center;
+                 gap: 4px 8px;
+                 margin-top: 6px;
+                 padding-top: 5px;
+                 border-top: 1px dashed var(--border-bright);
+                 font-family: var(--font-mono);
+                 font-size: 9.5px;
+                 color: var(--byproduct, #f0a94c);
+             }
+             .byproduct-strip .bp-head {
+                 text-transform: uppercase;
+                 letter-spacing: .05em;
+                 opacity: .85;
+             }
+             .byproduct-strip .bp-item {
+                 display: inline-flex;
+                 align-items: center;
+                 gap: 3px;
+                 position: relative;
+             }
+             .byproduct-strip img { width: 11px; height: 11px; object-fit: contain; }
+
+             /* stats strip above the canvas */
+             #calc-stats {
+                 display: none;
+                 gap: 16px; flex-wrap: wrap; align-items: center;
+                 padding: 9px 14px; margin: 0 0 10px;
+                 background: var(--bg-raised);
+                 border: 1px solid var(--border);
+                 border-radius: 9px;
+                 font-size: 11.5px; color: var(--text-secondary);
+             }
+             #calc-stats.visible { display: flex; }
+             #calc-stats b { color: var(--text-primary); font-weight: 600; }
+             #calc-stats .spacer { margin-left: auto; display: flex; gap: 8px; }
+
              #add-prompt {
                  position: fixed;
                  inset: 0;
@@ -1361,6 +1723,7 @@
 
              .io-label:hover .io-tooltip {
                  opacity: 1;
+                 transition-delay: 500ms;   /* dwell before naming the item */
              }
     </style>
 </head>
@@ -1550,16 +1913,163 @@
     <!-- =========================================================
          Add tab prompt
          ========================================================= -->
+    <!-- =========================================================
+         Calculator configuration panel
+         ========================================================= -->
+    <div id="calc-panel" aria-label="Calculator settings">
+        <div id="calc-panel-head">
+            <span id="calc-panel-title">Calculator</span>
+            <button class="icon-btn" id="calc-close" title="Close" aria-label="Close">
+                <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+
+        <div id="calc-panel-body">
+            <!-- World -->
+            <section class="calc-sec">
+                <h4>World</h4>
+                <p class="calc-hint" id="calc-world-state">No world loaded &mdash; every recipe is available and resources are map-wide totals.</p>
+                <div class="calc-row">
+                    <label class="btn btn-secondary calc-file">
+                        Import .sav<input type="file" id="calc-world-file" accept=".sav" hidden>
+                    </label>
+                    <button class="btn btn-secondary" id="calc-world-clear">Clear</button>
+                </div>
+                <div id="world-progress" style="display:none">
+                    <div class="wp-bar"><i></i></div>
+                    <p class="calc-hint" id="world-progress-text"></p>
+                </div>
+                <p class="calc-hint calc-warn" id="calc-world-note" style="display:none"></p>
+            </section>
+
+            <!-- Targets -->
+            <section class="calc-sec">
+                <h4 style="display:flex;align-items:center;gap:8px">
+                    <span>Targets</span>
+                    <span class="calc-hint" style="flex:1">&mdash; drag to set priority</span>
+                    <button class="tgt-mode" id="calc-linkmax"
+                            title="Linked max: share spare capacity evenly between maximised targets instead of favouring the top of the list">MAX</button>
+                </h4>
+                <div id="calc-targets"></div>
+                <div class="calc-row">
+                    <input type="text" id="calc-item-search" placeholder="Search an item to add&hellip;" autocomplete="off">
+                </div>
+                <div id="calc-item-results"></div>
+            </section>
+
+            <!-- Mode + depth -->
+            <section class="calc-sec">
+                <h4>Optimise for</h4>
+                <p class="calc-hint" style="margin:0 0 8px">Top is the goal. The rest
+                   break ties when two plans are otherwise equal &mdash; drag to reorder.</p>
+                <div id="calc-priority"></div>
+                <p class="calc-hint" id="calc-mode-hint"></p>
+                <p class="calc-hint calc-warn" id="calc-mode-warn" style="display:none"></p>
+
+                <h4 style="margin-top:14px">Resource variety</h4>
+                <div class="seg" id="calc-lr">
+                    <button class="seg-btn active" data-lr="off">Off</button>
+                    <button class="seg-btn" data-lr="soft">Soft</button>
+                    <button class="seg-btn" data-lr="hard">Hard</button>
+                </div>
+                <p class="calc-hint" id="calc-lr-hint"></p>
+                <h4 style="margin-top:14px">Depth</h4>
+                <div class="seg" id="calc-depth">
+                    <button class="seg-btn active" data-depth="quick">Quick</button>
+                    <button class="seg-btn" data-depth="absolute">Absolute</button>
+                </div>
+                <p class="calc-hint" id="calc-depth-hint">Quick gives a fast estimate. Absolute searches harder for the true best and can be slow.</p>
+            </section>
+
+            <!-- Resources -->
+            <section class="calc-sec">
+                <h4>Resources</h4>
+                <p class="calc-hint">Untick a resource to keep it out of the plan, or set a cap to limit how much you feed in.</p>
+                <div class="calc-row">
+                    <button class="btn btn-secondary" id="calc-res-reset">Reset to map totals</button>
+                </div>
+                <div id="calc-resource-list"></div>
+            </section>
+
+            <!-- Restrictions -->
+            <section class="calc-sec">
+                <h4>Recipes &amp; machines</h4>
+                <p class="calc-hint" id="calc-restrict-hint">Untick anything you do not want used.</p>
+                <div class="calc-row">
+                    <input type="text" id="calc-recipe-search" placeholder="Filter recipes&hellip;" autocomplete="off">
+                    <button class="btn btn-secondary" id="calc-alt-toggle" title="Toggle all alternates">Alternates</button>
+                </div>
+                <div id="calc-recipe-list"></div>
+            </section>
+        </div>
+
+        <!-- Buttons first, report underneath: a long status line then grows the
+             bar downwards instead of being squeezed into a sliver beside them. -->
+        <div id="calc-panel-foot">
+            <div id="calc-foot-actions">
+                <span id="calc-ultra-wrap">
+                    <button class="btn btn-ultra" id="calc-ultra"
+                            title="Search every resource and recipe combination for the outright best plan. Runs in the background; you can stop it at any time.">ULTRA</button>
+                    <button class="btn btn-secondary" id="calc-keep" style="display:none"
+                            title="Stop searching and use the best plan found so far">Keep</button>
+                    <span id="calc-depth-pick">
+                        <span class="dp-label">depth</span>
+                        <button class="dp" data-depth="3" type="button">3</button>
+                        <button class="dp" data-depth="4" type="button">4</button>
+                        <button class="dp" data-depth="5" type="button">5</button>
+                    </span>
+                </span>
+                <button class="btn btn-primary" id="calc-run">Calculate</button>
+            </div>
+            <div id="calc-foot-report">
+                <p class="calc-hint" id="calc-ultra-note" style="display:none;margin:0"></p>
+                <span id="calc-error"></span>
+                <p class="calc-hint" id="calc-preview" style="margin:0"></p>
+                <div id="ultra-bar" style="display:none"><i></i></div>
+            </div>
+        </div>
+    </div>
+
     <div id="add-prompt">
         <div id="add-prompt-blur"></div>
         <div id="add-prompt-panel">
-            <h3>Add production chain</h3>
-            <p>Paste a share URL or code from <a href="https://www.satisfactorytools.com" target="_blank" rel="noopener" style="color:var(--accent-line)">satisfactorytools.com</a></p>
-            <input type="text"
-                   id="share-input"
-                   placeholder="https://www.satisfactorytools.com/1.0/production?share=... or just the code"
-                   autocomplete="off"
-                   spellcheck="false">
+            <h3>Add production</h3>
+            <div class="seg" id="add-kind" role="tablist">
+                <button class="seg-btn active" data-kind="share" role="tab">Share link</button>
+                <button class="seg-btn" data-kind="calc" role="tab">New calculator</button>
+                <button class="seg-btn" data-kind="import" role="tab">Import</button>
+            </div>
+
+            <div data-kindpane="share">
+                <p>Paste a share URL or code from <a href="https://www.satisfactorytools.com" target="_blank" rel="noopener" style="color:var(--accent-line)">satisfactorytools.com</a></p>
+                <input type="text"
+                       id="share-input"
+                       placeholder="https://www.satisfactorytools.com/1.0/production?share=... or just the code"
+                       autocomplete="off"
+                       spellcheck="false">
+            </div>
+
+            <div data-kindpane="calc" style="display:none">
+                <p>Build a chain from scratch. Pick what you want to make, and the
+                   calculator works out the recipes, machines and raw resources.</p>
+                <input type="text" id="calc-name-input" placeholder="Name (optional)"
+                       autocomplete="off" spellcheck="false">
+            </div>
+
+            <div data-kindpane="import" style="display:none">
+                <p>Paste a calculator ID, or load a <code>.json</code> file exported
+                   from this tool. This restores the targets, mode and limits &mdash;
+                   then press Calculate.</p>
+                <input type="text" id="import-input" placeholder="Paste calculator ID&hellip;"
+                       autocomplete="off" spellcheck="false">
+                <div class="prompt-actions" style="justify-content:flex-start;margin-top:8px">
+                    <label class="btn btn-secondary calc-file">
+                        Load .json<input type="file" id="import-file" accept=".json,application/json" hidden>
+                    </label>
+                    <span class="calc-hint" id="import-note" style="margin:0"></span>
+                </div>
+            </div>
+
             <span id="share-error"></span>
             <div class="prompt-actions">
                 <button class="btn btn-secondary" id="btn-add-cancel">Cancel</button>
@@ -1729,8 +2239,10 @@
                 tabs: state.tabs.map(t => ({
                     id: t.id,
                     name: t.name,
+                    kind: t.kind || 'share',
                     share: t.share,
                     chain: t.chain,
+                    calc: t.calc || null,
                     ticked: [...t.ticked],
                     dismissed: [...t.dismissed],
                 })),
@@ -1746,9 +2258,31 @@
                 const parsed = JSON.parse(raw);
                 state.tabs = (parsed.tabs || []).map(t => ({
                     ...t,
+                    kind: t.kind || 'share',
+                    calc: t.calc || null,
                     ticked: new Set(t.ticked || []),
                     dismissed: new Set(t.dismissed || []),
                 }));
+                // A world lives only in the running server, so a reloaded page
+                // must re-import the save before it can calculate again.
+                state.tabs.forEach(t => {
+                    if (t.calc && !t.calc.resources) t.calc.resources = {};
+                    if (t.calc && !t.calc.leastResources) t.calc.leastResources = 'off';
+                    if (t.calc && t.calc.linkedMax === undefined) t.calc.linkedMax = false;
+                    if (t.calc && !Array.isArray(t.calc.priority)) {
+                        // Older tabs stored a single mode; promote it to the head
+                        // of a full priority list.
+                        const all = ['least_power', 'least_machines', 'least_steps',
+                                     'easiest', 'maximise'];
+                        const head = t.calc.mode && all.includes(t.calc.mode)
+                            ? t.calc.mode : 'least_power';
+                        t.calc.priority = [head, ...all.filter(m => m !== head)];
+                    }
+                    if (t.calc && t.calc.worldId) {
+                        t.calc.worldId = null;
+                        t.calc.worldStale = true;
+                    }
+                });
                 state.activeTab = parsed.activeTab || null;
             } catch (e) {
                 console.warn('Failed to load state:', e);
@@ -1956,8 +2490,52 @@
 
         const ICON_BASE = 'https://www.satisfactorytools.com/assets/images/items/';
 
+        // Full-chain view is a way of looking at the chain, not part of it, so it
+        // lives in the browser rather than in the saved tab. Declared here, not
+        // beside the other view toggles further down: renderChain() reads it and
+        // runs during init, before those later statements have executed.
+        let fullView = false;
+        try { fullView = localStorage.getItem('full_view') === '1'; } catch (e) { }
+
+        // Reference game data (items / recipes / machines / resources). Declared
+        // here, not beside its loader further down: renderChain consults it to
+        // show stats for imported chains and runs during init, and `typeof` on a
+        // let in its temporal dead zone throws rather than returning undefined.
+        let REF = null;
+        let refPromise = null;
+
         function iconUrl(cls) {
-            return ICON_BASE + cls.toLowerCase().replace(/_/g, '-') + '_256.png';
+            if (!cls) return '';
+            // The icon CDN keys everything off the item descriptor name. The
+            // share solver already hands us Desc_* machine classes, but the
+            // calculator reads machines out of the game docs, where the same
+            // building is Build_* - which 404s. Normalise before building the URL.
+            const key = String(cls).replace(/^Build_/, 'Desc_');
+            return ICON_BASE + key.toLowerCase().replace(/_/g, '-') + '_256.png';
+        }
+
+        // Human-readable item name. The chain's own edges carry proper labels,
+        // so prefer those; fall back to the reference data, then to splitting
+        // the class name ("Desc_IronPlate_C" -> "Iron Plate").
+        const _labelCache = new Map();
+        function itemLabel(chain, cls) {
+            if (!cls) return '';
+            if (_labelCache.has(cls)) return _labelCache.get(cls);
+            let name = null;
+            if (chain && chain.edges) {
+                const e = chain.edges.find(x => x.item === cls && x.item_label);
+                if (e) name = e.item_label;
+            }
+            if (!name && typeof REF !== 'undefined' && REF) {
+                const it = REF.items.find(i => i.id === cls);
+                if (it) name = it.name;
+            }
+            if (!name) {
+                name = String(cls).replace(/^Desc_/, '').replace(/_C$/, '')
+                    .replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').trim();
+            }
+            _labelCache.set(cls, name);
+            return name;
         }
 
         function fmtAmt(n) {
@@ -1976,7 +2554,9 @@
                 const nodes = layerNodeIds.map(id => chain.nodes.find(n => n.id === id)).filter(Boolean);
 
                 const tickable = nodes.filter(n => n.kind === 'recipe' || n.kind === 'raw' || n.kind === 'input');
-                const dismissible = nodes.filter(n => n.kind === 'byproduct' || n.kind === 'product' || n.kind === 'sink');
+                // Byproducts are reported on the producing card now, so they are
+                // no longer something to acknowledge before moving on.
+                const dismissible = nodes.filter(n => n.kind === 'product' || n.kind === 'sink');
 
                 // Layer not complete if any tickable node unticked
                 if (tickable.some(n => !ticked.has(n.id))) return i;
@@ -1991,7 +2571,7 @@
             const ids = chain.layers[layerIdx];
             const nodes = ids.map(id => chain.nodes.find(n => n.id === id)).filter(Boolean);
             const tickable = nodes.filter(n => n.kind === 'recipe' || n.kind === 'raw' || n.kind === 'input');
-            const dismissible = nodes.filter(n => n.kind === 'byproduct' || n.kind === 'product' || n.kind === 'sink');
+            const dismissible = nodes.filter(n => n.kind === 'product' || n.kind === 'sink');
             return tickable.every(n => ticked.has(n.id)) && dismissible.every(n => dismissed.has(n.id));
         }
 
@@ -2005,6 +2585,21 @@
 
         function edgesTo(chain, nodeId) {
             return chain.edges.filter(e => e.to_id === nodeId);
+        }
+
+        // Byproduct nodes hanging off a given recipe, with their rates.
+        function byproductsFrom(chain, nodeId) {
+            const byId = {};
+            chain.nodes.forEach(n => { byId[n.id] = n; });
+            const out = [];
+            chain.edges.forEach(e => {
+                if (e.from_id !== nodeId) return;
+                const dst = byId[e.to_id];
+                if (dst && dst.kind === 'byproduct') {
+                    out.push({ item: dst.item, label: dst.label, amount: dst.amount });
+                }
+            });
+            return out;
         }
 
         function edgesFrom(chain, nodeId) {
@@ -2034,7 +2629,7 @@
                     span.innerHTML = `<span class="io-amount">${fmtAmt(amt)}</span>/min`;
                     const tip = document.createElement('div');
                     tip.className = 'io-tooltip';
-                    tip.textContent = item.replace(/^Desc_/, '').replace(/_C$/, '').replace(/_/g, ' ');
+                    tip.textContent = itemLabel(chain, item);
                     lbl.appendChild(img);
                     lbl.appendChild(span);
                     lbl.appendChild(tip);
@@ -2114,6 +2709,35 @@
                 body.appendChild(amt);
             }
 
+            // Anything this machine makes that nobody downstream consumes is
+            // reported right here, on the same line as the machine responsible.
+            const spare = byproductsFrom(chain, node.id);
+            if (spare.length) {
+                const strip = document.createElement('div');
+                strip.className = 'byproduct-strip';
+                const head = document.createElement('span');
+                head.className = 'bp-head';
+                head.textContent = 'spare';
+                strip.appendChild(head);
+                spare.forEach(bp => {
+                    const el = document.createElement('span');
+                    el.className = 'bp-item io-label';
+                    el.style.cssText = 'background:none;border:0;padding:0;max-width:none';
+                    const img = document.createElement('img');
+                    img.src = iconUrl(bp.item);
+                    img.alt = bp.label;
+                    img.onerror = () => img.style.display = 'none';
+                    const txt = document.createElement('span');
+                    txt.textContent = fmtAmt(bp.amount) + '/min';
+                    const tip = document.createElement('div');
+                    tip.className = 'io-tooltip';
+                    tip.textContent = itemLabel(chain, bp.item);
+                    el.appendChild(img); el.appendChild(txt); el.appendChild(tip);
+                    strip.appendChild(el);
+                });
+                body.appendChild(strip);
+            }
+
             card.appendChild(body);
 
             // --- Output labels (right) ---
@@ -2131,7 +2755,7 @@
                     span.innerHTML = `<span class="io-amount">${fmtAmt(amt)}</span>/min`;
                     const tip = document.createElement('div');
                     tip.className = 'io-tooltip';
-                    tip.textContent = item.replace(/^Desc_/, '').replace(/_C$/, '').replace(/_/g, ' ');
+                    tip.textContent = itemLabel(chain, item);
                     lbl.appendChild(img);
                     lbl.appendChild(span);
                     lbl.appendChild(tip);
@@ -2168,6 +2792,17 @@
             renderSidebar(); // update progress bar
         }
 
+        // In the normal view a dismissed card simply disappears, so a toggle
+        // behaves exactly like a dismiss. The full view is where the "un-dismiss"
+        // half actually becomes reachable.
+        function toggleDismiss(tab, nodeId) {
+            if (tab.dismissed.has(nodeId)) tab.dismissed.delete(nodeId);
+            else tab.dismissed.add(nodeId);
+            saveState();
+            renderChain();
+            renderSidebar();
+        }
+
         function dismissNode(tab, nodeId) {
             tab.dismissed.add(nodeId);
             saveState();
@@ -2183,7 +2818,33 @@
 
             canvas.querySelectorAll('.layer-row, .chain-placeholder').forEach(el => el.remove());
 
+            if (typeof renderCalcStats === 'function') {
+                // Imported chains need the reference data for machine power.
+                if (typeof REF !== 'undefined' && !REF && typeof loadReference === 'function') {
+                    loadReference().then(() => renderCalcStats()).catch(() => { });
+                }
+                renderCalcStats();
+            }
+
             if (!tab || !tab.chain) {
+                // A calculator tab that has not been solved yet gets its own
+                // prompt rather than the generic "pick a production" message.
+                if (tab && tab.kind === 'calc') {
+                    empty.style.display = 'none';
+                    const ph = document.createElement('div');
+                    ph.className = 'chain-placeholder';
+                    ph.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:14px;'
+                        + 'padding:70px 20px;text-align:center;color:var(--text-secondary)';
+                    ph.innerHTML = '<p style="margin:0;font-size:13px">Nothing calculated yet.<br>'
+                        + 'Choose what you want to make, then press Calculate.</p>';
+                    const b = document.createElement('button');
+                    b.className = 'btn btn-primary';
+                    b.textContent = 'Open calculator';
+                    b.addEventListener('click', () => openCalcPanel());
+                    ph.appendChild(b);
+                    canvas.appendChild(ph);
+                    return;
+                }
                 empty.style.display = '';
                 return;
             }
@@ -2210,10 +2871,16 @@
                 row.className = 'layer-row';
                 row.dataset.layerIdx = layerIdx;
 
-                if (isHidden) row.classList.add('hidden');
-                if (isFaded) row.classList.add('faded');
-                if (isFuture && !allDone) {
-                    row.classList.add('hidden');
+                // Full-chain view shows every layer at once; progress is read
+                // from the green ticks rather than from what is on screen.
+                if (fullView) {
+                    row.classList.add('fullview');
+                } else {
+                    if (isHidden) row.classList.add('hidden');
+                    if (isFaded) row.classList.add('faded');
+                    if (isFuture && !allDone) {
+                        row.classList.add('hidden');
+                    }
                 }
 
                 // Layer label
@@ -2222,6 +2889,7 @@
                 label.textContent = layerIdx === 0
                     ? 'Layer 0 — Raw inputs'
                     : `Layer ${layerIdx}`;
+                if (fullView && isCurrent && !allDone) label.classList.add('here');
                 row.appendChild(label);
 
                 // Cards
@@ -2232,16 +2900,24 @@
                     const node = nodeMap[nodeId];
                     if (!node) return;
 
-                    // Skip dismissed
-                    if (tab.dismissed.has(nodeId)) return;
+                    // Dismissed outputs/byproducts are normally gone for good.
+                    // The full view brings them back so the chain reads whole.
+                    const isDismissed = tab.dismissed.has(nodeId);
+                    if (isDismissed && !fullView) return;
 
-                    // Byproducts and products: dismissible cards
-                    if (node.kind === 'byproduct' || node.kind === 'product' || node.kind === 'sink') {
-                        if (isCurrent || allDone) {
+                    // Byproducts are drawn on the card that produces them.
+                    if (node.kind === 'byproduct') return;
+
+                    // Outputs and sinks stay as cards you acknowledge.
+                    if (node.kind === 'product' || node.kind === 'sink') {
+                        if (isCurrent || allDone || fullView) {
                             const wrap = document.createElement('div');
-                            wrap.className = `dismiss-card ${node.kind}`;
+                            wrap.className = `dismiss-card ${node.kind}`
+                                + (isDismissed ? ' done' : '');
                             wrap.dataset.nodeId = nodeId;
-                            wrap.title = 'Click to acknowledge';
+                            wrap.title = isDismissed
+                                ? 'Already acknowledged — click to bring it back'
+                                : 'Click to acknowledge';
 
                             const img = document.createElement('img');
                             img.src = iconUrl(node.item);
@@ -2261,7 +2937,7 @@
                             wrap.appendChild(img);
                             wrap.appendChild(text);
                             wrap.appendChild(hint);
-                            wrap.addEventListener('click', () => dismissNode(tab, nodeId));
+                            wrap.addEventListener('click', () => toggleDismiss(tab, nodeId));
                             cardsDiv.appendChild(wrap);
                         }
                         return;
@@ -2272,6 +2948,11 @@
                 });
 
                 row.appendChild(cardsDiv);
+                // A layer can legitimately end up with nothing to show - it may
+                // hold only an output that is not reachable yet, or a byproduct
+                // already dismissed. Collapse it rather than leaving a bare
+                // "Layer N" heading floating on the canvas.
+                if (cardsDiv.children.length === 0) row.classList.add('hidden');
                 canvas.insertBefore(row, lineSvg);
             });
         }
@@ -2549,6 +3230,1572 @@
         document.getElementById('share-input').addEventListener('keydown', e => {
             if (e.key === 'Enter') confirmAddTab();
         });
+
+        // =====================================================================
+        // BLOCK E: Production calculator - reference data, targets, modes,
+        //          world import, recipe restrictions, solve + render
+        // =====================================================================
+
+        // (REF / refPromise are declared up in Block C - renderChain reads REF
+        // during init, which would hit the let temporal dead zone from here.)
+
+        function loadReference() {
+            if (refPromise) return refPromise;
+            refPromise = fetch('/api/reference')
+                .then(r => r.ok ? r.json() : r.json().then(b => Promise.reject(new Error(b.error || 'Reference unavailable'))))
+                .then(d => { REF = d; return d; });
+            return refPromise;
+        }
+
+        function defaultCalc() {
+            return {
+                targets: [],                 // [{item, type:'exact'|'maximize', amount}]
+                mode: 'least_power',
+                depth: 'quick',
+                worldId: null,
+                worldName: null,
+                worldRecipes: null,          // null = no world (everything allowed)
+                worldMachines: null,
+                blockedRecipes: [],
+                blockedMachines: [],
+                resources: {},               // sparse per-resource caps / off
+                leastResources: 'off',       // 'off' | 'soft' | 'hard'
+                ultraDepth: 4,               // resources ULTRA may ban at once
+                linkedMax: false,            // MAX buttons become LMAX
+                priority: ['least_power', 'least_machines', 'least_steps',
+                           'easiest', 'maximise'],
+                stats: null,
+            };
+        }
+
+        function activeCalcTab() {
+            const t = getActiveTab();
+            return (t && t.kind === 'calc') ? t : null;
+        }
+
+        // ---- Panel open/close ----------------------------------------------------
+
+        const calcPanel = document.getElementById('calc-panel');
+
+        function openCalcPanel() {
+            const tab = activeCalcTab();
+            if (!tab) return;
+            loadReference().then(() => {
+                document.getElementById('calc-panel-title').textContent = tab.name || 'Calculator';
+                renderCalcAll(tab);
+                calcPanel.classList.add('open');
+                previewSoon();
+            }).catch(e => setCalcError(e.message));
+        }
+        function closeCalcPanel() { calcPanel.classList.remove('open'); }
+        document.getElementById('calc-close').addEventListener('click', closeCalcPanel);
+
+        function setCalcError(msg) {
+            const el = document.getElementById('calc-error');
+            el.textContent = msg || '';
+            el.style.color = '#ef4444';
+            el.style.fontSize = '11px';
+        }
+
+        // ---- Rendering the panel -------------------------------------------------
+
+        function renderCalcAll(tab) {
+            renderTargets(tab);
+            renderModeDepth(tab);
+            renderWorldState(tab);
+            renderResourceList(tab);
+            renderRecipeList(tab);
+        }
+
+        // ---- Resource availability + caps ----------------------------------------
+        // calc.resources is sparse: only resources the user actually changed.
+        //   { id: null }   -> unlimited
+        //   { id: 0 }      -> switched off
+        //   { id: 120 }    -> capped at 120/min
+        // Anything absent keeps the map-wide default.
+
+        function resourceDefaults(tab) {
+            // With a world loaded its own limits win (water unlimited there too).
+            const w = tab.calc.worldResources;
+            if (w) return w;
+            const out = {};
+            (REF.resources || []).forEach(r => { out[r.id] = r.max; });
+            return out;
+        }
+
+        function renderResourceList(tab) {
+            const host = document.getElementById('calc-resource-list');
+            if (!host || !REF) return;
+            const defaults = resourceDefaults(tab);
+            const over = tab.calc.resources || (tab.calc.resources = {});
+            host.innerHTML = '';
+
+            (REF.resources || []).forEach(r => {
+                const def = defaults[r.id];
+                const hasOverride = Object.prototype.hasOwnProperty.call(over, r.id);
+                const val = hasOverride ? over[r.id] : def;
+                const off = val === 0;
+                const unlimited = val === null || val === undefined;
+
+                const row = document.createElement('div');
+                row.className = 'tgt';
+                row.innerHTML = `
+                  <input type="checkbox" ${off ? '' : 'checked'} title="Use this resource">
+                  <img class="tgt-icon" src="${iconUrl(r.id)}" alt="" onerror="this.style.visibility='hidden'">
+                  <span class="tgt-name" title="${escHtml(r.name)}">${escHtml(r.name)}</span>
+                  <input class="tgt-amt" type="number" min="0" step="any"
+                         value="${off || unlimited ? '' : fmtAmt(val)}"
+                         placeholder="${unlimited ? '∞' : '/min'}" ${off ? 'disabled' : ''}>`;
+
+                const [chk, , , amt] = row.children;
+                chk.addEventListener('change', () => {
+                    if (chk.checked) delete over[r.id]; else over[r.id] = 0;
+                    saveState(); renderResourceList(tab); previewSoon();
+                });
+                amt.addEventListener('change', () => {
+                    const v = parseFloat(amt.value);
+                    if (amt.value.trim() === '' || isNaN(v)) delete over[r.id];
+                    else over[r.id] = Math.max(0, v);
+                    saveState(); previewSoon();
+                });
+                host.appendChild(row);
+            });
+        }
+
+        document.getElementById('calc-res-reset').addEventListener('click', () => {
+            const tab = activeCalcTab(); if (!tab) return;
+            tab.calc.resources = {};
+            saveState(); renderResourceList(tab);
+        });
+
+        function itemName(id) {
+            if (!REF) return id;
+            const it = REF.items.find(i => i.id === id);
+            return it ? it.name : id;
+        }
+
+        function renderTargets(tab) {
+            renderLinkMaxBtn(tab);
+            const host = document.getElementById('calc-targets');
+            host.innerHTML = '';
+            const c = tab.calc;
+            if (!c.targets.length) {
+                host.innerHTML = '<p class="calc-hint">No targets yet &mdash; search below to add one.</p>';
+                return;
+            }
+            c.targets.forEach((t, idx) => {
+                const row = document.createElement('div');
+                row.className = 'tgt';
+                row.draggable = true;
+                row.dataset.idx = idx;
+                const isMax = (t.type === 'maximize' || t.type === 'linked');
+                const maxLabel = t.type === 'linked' ? 'LMAX' : 'MAX';
+                row.innerHTML = `
+                  <span class="tgt-grip" title="Drag to reorder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/>
+                      <circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/>
+                    </svg>
+                  </span>
+                  <img class="tgt-icon" src="${iconUrl(t.item)}" alt="" onerror="this.style.visibility='hidden'">
+                  <span class="tgt-name" title="${escHtml(itemName(t.item))}">${escHtml(itemName(t.item))}</span>
+                  <input class="tgt-amt" type="number" min="0" step="any"
+                         value="${isMax ? '' : (t.amount ?? 60)}" ${isMax ? 'disabled' : ''}
+                         placeholder="/min">
+                  <button class="tgt-mode ${isMax ? 'max' : ''}" title="Switch between an exact rate and maximising">${isMax ? maxLabel : '/min'}</button>
+                  <button class="tgt-del" title="Remove">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>`;
+
+                row.querySelector('.tgt-mode').addEventListener('click', () => {
+                    const maxKind = tab.calc.linkedMax ? 'linked' : 'maximize';
+                    t.type = (t.type === 'exact') ? maxKind : 'exact';
+                    if (t.type === 'exact' && t.amount == null) t.amount = 60;
+                    saveState(); renderTargets(tab); renderModeDepth(tab); previewSoon();
+                });
+                row.querySelector('.tgt-del').addEventListener('click', () => {
+                    c.targets.splice(idx, 1); saveState(); renderTargets(tab); previewSoon();
+                });
+                row.querySelector('.tgt-amt').addEventListener('input', e => {
+                    t.amount = parseFloat(e.target.value);
+                    saveState(); previewSoon();
+                });
+
+                // Drag to reorder = priority order (top wins contested resources)
+                row.addEventListener('dragstart', e => {
+                    row.classList.add('dragging');
+                    e.dataTransfer.setData('text/plain', String(idx));
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                row.addEventListener('dragend', () => {
+                    row.classList.remove('dragging');
+                    host.querySelectorAll('.tgt').forEach(r => r.classList.remove('drop-target'));
+                });
+                row.addEventListener('dragover', e => { e.preventDefault(); row.classList.add('drop-target'); });
+                row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+                row.addEventListener('drop', e => {
+                    e.preventDefault();
+                    const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                    const to = idx;
+                    if (isNaN(from) || from === to) return;
+                    const [moved] = c.targets.splice(from, 1);
+                    c.targets.splice(to, 0, moved);
+                    saveState(); renderTargets(tab); previewSoon();
+                });
+
+                host.appendChild(row);
+            });
+        }
+
+        document.getElementById('calc-linkmax').addEventListener('click', () => {
+            const tab = activeCalcTab(); if (!tab) return;
+            const c = tab.calc;
+            c.linkedMax = !c.linkedMax;
+            const to = c.linkedMax ? 'linked' : 'maximize';
+            const from = c.linkedMax ? 'maximize' : 'linked';
+            c.targets.forEach(t => { if (t.type === from) t.type = to; });
+            saveState(); renderTargets(tab); renderModeDepth(tab); previewSoon();
+        });
+
+        function renderLinkMaxBtn(tab) {
+            const b = document.getElementById('calc-linkmax');
+            if (!b || !tab) return;
+            const on = !!tab.calc.linkedMax;
+            b.textContent = on ? 'LMAX' : 'MAX';
+            b.classList.toggle('max', on);
+        }
+
+        // ---- Item search ---------------------------------------------------------
+
+        const itemSearch = document.getElementById('calc-item-search');
+        itemSearch.addEventListener('input', () => {
+            const tab = activeCalcTab(); if (!tab || !REF) return;
+            const q = itemSearch.value.trim().toLowerCase();
+            const host = document.getElementById('calc-item-results');
+            host.innerHTML = '';
+            if (!q) return;
+            REF.items.filter(i => i.name.toLowerCase().includes(q)).slice(0, 25).forEach(i => {
+                const el = document.createElement('div');
+                el.className = 'res-item';
+                el.innerHTML = `<img src="${iconUrl(i.id)}" alt="" onerror="this.style.visibility='hidden'"><span>${escHtml(i.name)}</span>`;
+                el.addEventListener('click', () => {
+                    if (!tab.calc.targets.some(t => t.item === i.id)) {
+                        tab.calc.targets.push({ item: i.id, type: 'exact', amount: 60 });
+                        saveState(); renderTargets(tab); previewSoon();
+                    }
+                    itemSearch.value = ''; host.innerHTML = '';
+                });
+                host.appendChild(el);
+            });
+        });
+
+        // ---- Mode + depth --------------------------------------------------------
+
+        const MODE_HINTS = {
+            least_power:    'Fewest megawatts to run.',
+            least_machines: 'Fewest buildings to place.',
+            least_steps:    'Fewest distinct recipes in the chain.',
+            easiest:        'Rounds targets to tidy numbers that underclock cleanly.',
+            maximise:       'Pure output — makes as much as the resources allow, '
+                          + 'with no regard for power, machines or step count.',
+        };
+        const LR_HINTS = {
+            off:  'Use whatever resources give the best result.',
+            soft: 'Prefer fewer resource types, but take an extra one when it clearly '
+                + 'pays off for your chosen optimisation.',
+            hard: 'Fewest resource types outright, whatever it costs. Water is always '
+                + 'allowed unless you switch it off above.',
+        };
+
+        const MODE_NAMES = {
+            least_power: 'Least power', least_machines: 'Least machines',
+            least_steps: 'Least steps', easiest: 'Easiest', maximise: 'Maximise',
+        };
+
+        function renderPriority(tab) {
+            const host = document.getElementById('calc-priority');
+            if (!host) return;
+            const list = tab.calc.priority;
+            tab.calc.mode = list[0];                 // head of the list is the goal
+            host.innerHTML = '';
+            list.forEach((mode, idx) => {
+                const row = document.createElement('div');
+                row.className = 'prio' + (idx === 0 ? ' goal' : '');
+                row.draggable = true;
+                row.dataset.idx = idx;
+                row.innerHTML = `
+                  <span class="rank">${idx + 1}</span>
+                  <span class="grip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/>
+                    <circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/>
+                  </svg></span>
+                  <span class="who">${escHtml(MODE_NAMES[mode] || mode)}</span>
+                  <span class="tag">${idx === 0 ? 'goal' : 'tie-break'}</span>`;
+
+                row.addEventListener('dragstart', e => {
+                    row.classList.add('dragging');
+                    e.dataTransfer.setData('text/plain', String(idx));
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                row.addEventListener('dragend', () => {
+                    row.classList.remove('dragging');
+                    host.querySelectorAll('.prio').forEach(r => r.classList.remove('drop-target'));
+                });
+                row.addEventListener('dragover', e => { e.preventDefault(); row.classList.add('drop-target'); });
+                row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+                row.addEventListener('drop', e => {
+                    e.preventDefault();
+                    const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                    if (isNaN(from) || from === idx) return;
+                    const [moved] = list.splice(from, 1);
+                    list.splice(idx, 0, moved);
+                    tab.calc.mode = list[0];
+                    saveState(); renderPriority(tab); renderModeDepth(tab); previewSoon();
+                });
+                host.appendChild(row);
+            });
+        }
+
+        function renderModeDepth(tab) {
+            renderPriority(tab);
+            document.querySelectorAll('#calc-depth .seg-btn').forEach(b =>
+                b.classList.toggle('active', b.dataset.depth === tab.calc.depth));
+            const lr = tab.calc.leastResources || 'off';
+            document.querySelectorAll('#calc-lr .seg-btn').forEach(b =>
+                b.classList.toggle('active', b.dataset.lr === lr));
+            document.getElementById('calc-mode-hint').textContent = MODE_HINTS[tab.calc.mode] || '';
+            document.getElementById('calc-lr-hint').textContent = LR_HINTS[lr] || '';
+
+            // Maximised targets are settled before the mode's objective runs, so
+            // they set the scale of the factory no matter what you optimise for.
+            // Only worth saying when it actually applies.
+            document.getElementById('calc-ultra-wrap')
+                .classList.toggle('on', tab.calc.depth === 'absolute');
+            renderUltraDepth(tab);
+
+            const warn = document.getElementById('calc-mode-warn');
+            const maxed = tab.calc.targets.filter(t => t.type === 'maximize' || t.type === 'linked');
+            const kinds = [...new Set(maxed.map(t => t.type === 'linked' ? 'LMAX' : 'MAX'))].join(' and ');
+            if (lr === 'hard' && tab.calc.mode === 'easiest') {
+                // These two pull against each other: one resource type forces
+                // long-winded routes, and tidy numbers are bought by producing
+                // under the target.
+                warn.textContent = 'Heads up: Hard resource variety with Easiest can cut '
+                    + 'output a long way below what you asked for. Easiest already trims '
+                    + 'the rate to land on clean numbers with no leftovers, and Hard takes '
+                    + 'away the resources it would use to make up the difference. '
+                    + 'Try Soft or Off if the amount matters more than the tidiness.';
+                warn.style.display = '';
+            } else if (maxed.length && (tab.calc.mode === 'least_machines' || tab.calc.mode === 'least_power')) {
+                const what = tab.calc.mode === 'least_machines' ? 'machines' : 'power';
+                warn.textContent = `Heads up: ${maxed.length} target${maxed.length === 1 ? '' : 's'} `
+                    + `on ${kinds}. Output is maximised first, so the ${what} figure follows from `
+                    + `that — it will not be as low as it would be for fixed amounts. `
+                    + `Least ${what} only chooses the cheapest way to reach that output.`;
+                warn.style.display = '';
+            } else {
+                warn.style.display = 'none';
+            }
+        }
+
+        document.getElementById('calc-depth').addEventListener('click', e => {
+            const b = e.target.closest('.seg-btn'); const tab = activeCalcTab();
+            if (!b || !tab) return;
+            tab.calc.depth = b.dataset.depth; saveState(); renderModeDepth(tab); previewSoon();
+        });
+        document.getElementById('calc-lr').addEventListener('click', e => {
+            const b = e.target.closest('.seg-btn'); const tab = activeCalcTab();
+            if (!b || !tab) return;
+            tab.calc.leastResources = b.dataset.lr; saveState(); renderModeDepth(tab); previewSoon();
+        });
+
+        // ---- World import --------------------------------------------------------
+
+        function renderWorldState(tab) {
+            const c = tab.calc;
+            const el = document.getElementById('calc-world-state');
+            const note = document.getElementById('calc-world-note');
+            if (c.worldId) {
+                el.innerHTML = `<b style="color:var(--text-primary)">${escHtml(c.worldName || 'World')}</b> &mdash; `
+                    + `${c.worldRecipes.length} recipes, ${c.worldMachines.length} machines unlocked. `
+                    + `Water is unlimited; other resources use map-wide totals.`;
+                note.style.display = c.worldUnknown && c.worldUnknown.length ? '' : 'none';
+                if (c.worldUnknown && c.worldUnknown.length) {
+                    note.textContent = `${c.worldUnknown.length} schematic(s) not in the vanilla game data `
+                        + `(likely from mods) were skipped.`;
+                }
+            } else {
+                el.textContent = 'No world loaded — every recipe is available and resources are map-wide totals.';
+                note.style.display = 'none';
+            }
+            document.getElementById('calc-restrict-hint').textContent = c.worldId
+                ? 'With a world loaded you can only untick things — you cannot enable what you have not unlocked.'
+                : 'Untick anything you do not want used.';
+        }
+
+        // ---- World import progress ----------------------------------------------
+        // The bar is tweened rather than set: the server reports the decode as a
+        // single jump from 15% to 100%, and snapping across the bar reads as a
+        // glitch. It still gets there quickly, it just travels.
+
+        let wpShown = 0, wpTarget = 0, wpRaf = null;
+
+        function wpSet(pct, { instant = false } = {}) {
+            wpTarget = Math.max(0, Math.min(100, pct));
+            if (instant) { wpShown = wpTarget; wpPaint(); return; }
+            if (!wpRaf) wpRaf = requestAnimationFrame(wpStep);
+        }
+
+        function wpStep() {
+            const diff = wpTarget - wpShown;
+            if (Math.abs(diff) < 0.3) {
+                wpShown = wpTarget; wpPaint(); wpRaf = null; return;
+            }
+            // Ease toward the target: fast when far away, gentle on arrival.
+            wpShown += diff * 0.12 + Math.sign(diff) * 0.15;
+            wpPaint();
+            wpRaf = requestAnimationFrame(wpStep);
+        }
+
+        function wpPaint() {
+            const fill = document.querySelector('#world-progress .wp-bar > i');
+            if (fill) fill.style.width = wpShown.toFixed(2) + '%';
+        }
+
+        function wpShow(on, phase) {
+            const box = document.getElementById('world-progress');
+            const bar = document.querySelector('#world-progress .wp-bar');
+            if (!box) return;
+            box.style.display = on ? '' : 'none';
+            if (bar) bar.classList.toggle('extracting', phase === 'extract');
+            if (!on) { if (wpRaf) cancelAnimationFrame(wpRaf); wpRaf = null; wpShown = wpTarget = 0; wpPaint(); }
+        }
+
+        function wpText(t) {
+            const el = document.getElementById('world-progress-text');
+            if (el) el.textContent = t || '';
+        }
+
+        document.getElementById('calc-world-file').addEventListener('change', e => {
+            const tab = activeCalcTab(); const file = e.target.files[0];
+            if (!tab || !file) return;
+            e.target.value = '';
+            setCalcError('');
+            importWorldFile(tab, file);
+        });
+
+        function importWorldFile(tab, file) {
+            wpShow(true, 'upload');
+            wpSet(0, { instant: true });
+            wpText('Uploading ' + file.name + '\u2026');
+
+            const fd = new FormData();
+            fd.append('save', file);
+
+            // XHR, not fetch: fetch cannot report upload progress.
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/world');
+            xhr.upload.onprogress = ev => {
+                if (ev.lengthComputable) wpSet(100 * ev.loaded / ev.total);
+            };
+            xhr.onerror = () => { wpShow(false); setCalcError('Upload failed.'); };
+            xhr.onload = () => {
+                let d = {};
+                try { d = JSON.parse(xhr.responseText); } catch (err) { }
+                if (xhr.status >= 400 || d.error) {
+                    wpShow(false);
+                    setCalcError(d.error || 'Could not read save');
+                    return;
+                }
+                wpSet(100, { instant: true });
+                // Phase two: the server is decoding. Fresh bar, different colour.
+                setTimeout(() => {
+                    wpShow(true, 'extract');
+                    wpSet(0, { instant: true });
+                    wpText('Reading the world\u2026');
+                    pollWorld(tab, d.job_id);
+                }, 250);
+            };
+            xhr.send(fd);
+        }
+
+        async function pollWorld(tab, jobId) {
+            let creep = 0;
+            const tick = async () => {
+                let d;
+                try {
+                    d = await (await fetch('/api/world/' + jobId)).json();
+                } catch (err) { setTimeout(tick, 1500); return; }
+
+                if (d.state === 'running') {
+                    // The decode reports one coarse step, so inch forward between
+                    // updates to show it is alive - without ever passing the real
+                    // figure or reaching the end on its own.
+                    creep = Math.min(creep + 0.6, 12);
+                    wpSet(Math.min((d.percent || 0) + creep, 96));
+                    wpText((d.stage || 'Working') + ' \u2014 ' + Math.round(d.elapsed) + 's');
+                    setTimeout(tick, 1000);
+                    return;
+                }
+                if (d.error || !d.result) {
+                    wpShow(false);
+                    setCalcError(d.error || 'Could not read save');
+                    return;
+                }
+                wpSet(100);
+                wpText('Imported ' + d.result.name);
+                const r = d.result;
+                Object.assign(tab.calc, {
+                    worldId: r.world_id, worldName: r.name,
+                    worldRecipes: r.recipes, worldMachines: r.machines,
+                    worldResources: r.resources, worldUnknown: r.unknown,
+                    blockedRecipes: [], blockedMachines: [], resources: {},
+                });
+                saveState(); renderCalcAll(tab);
+                setTimeout(() => wpShow(false), 1200);
+            };
+            tick();
+        }
+
+        document.getElementById('calc-world-clear').addEventListener('click', () => {
+            const tab = activeCalcTab(); if (!tab) return;
+            Object.assign(tab.calc, {
+                worldId: null, worldName: null, worldRecipes: null,
+                worldMachines: null, worldResources: null, worldUnknown: null,
+                blockedRecipes: [], blockedMachines: [], resources: {},
+            });
+            saveState(); renderCalcAll(tab);
+        });
+
+        // ---- Recipe restrictions -------------------------------------------------
+
+        function availableRecipes(tab) {
+            const c = tab.calc;
+            if (!c.worldRecipes) return REF.recipes;
+            const allow = new Set(c.worldRecipes);
+            return REF.recipes.filter(r => allow.has(r.id));
+        }
+
+        function renderRecipeList(tab) {
+            const host = document.getElementById('calc-recipe-list');
+            const q = document.getElementById('calc-recipe-search').value.trim().toLowerCase();
+            const blocked = new Set(tab.calc.blockedRecipes);
+            host.innerHTML = '';
+            const list = availableRecipes(tab)
+                .filter(r => !q || r.name.toLowerCase().includes(q))
+                .slice(0, 300);
+            if (!list.length) { host.innerHTML = '<p class="calc-hint">Nothing matches.</p>'; return; }
+            list.forEach(r => {
+                const row = document.createElement('div');
+                row.className = 'rcp';
+                const id = 'rcp_' + r.id;
+                row.innerHTML = `<input type="checkbox" id="${id}" ${blocked.has(r.id) ? '' : 'checked'}>
+                    <label for="${id}">${escHtml(r.name)}</label>
+                    ${r.alternate ? '<span class="alt-badge">ALT</span>' : ''}`;
+                row.querySelector('input').addEventListener('change', ev => {
+                    const s = new Set(tab.calc.blockedRecipes);
+                    if (ev.target.checked) s.delete(r.id); else s.add(r.id);
+                    tab.calc.blockedRecipes = [...s];
+                    saveState(); previewSoon();
+                });
+                host.appendChild(row);
+            });
+        }
+        document.getElementById('calc-recipe-search').addEventListener('input', () => {
+            const tab = activeCalcTab(); if (tab) renderRecipeList(tab);
+        });
+        document.getElementById('calc-alt-toggle').addEventListener('click', () => {
+            const tab = activeCalcTab(); if (!tab) return;
+            const alts = availableRecipes(tab).filter(r => r.alternate).map(r => r.id);
+            const blocked = new Set(tab.calc.blockedRecipes);
+            const allBlocked = alts.every(id => blocked.has(id));
+            alts.forEach(id => allBlocked ? blocked.delete(id) : blocked.add(id));
+            tab.calc.blockedRecipes = [...blocked];
+            saveState(); renderRecipeList(tab);
+        });
+
+        // ---- Live preview --------------------------------------------------------
+        // Editing settings updates the numbers only. The chain itself is left
+        // alone until Calculate, so the canvas never rebuilds under you mid-edit.
+
+        let previewTimer = null;
+        let previewSeq = 0;
+
+        function calcPayload(tab) {
+            const c = tab.calc;
+            const targets = c.targets
+                .filter(t => t.type !== 'exact' || (t.amount > 0))
+                .map(t => t.type === 'exact'
+                    ? { item: t.item, type: 'exact', amount: t.amount }
+                    : { item: t.item, type: t.type });
+            return {
+                targets, mode: c.mode, depth: c.depth,
+                world_id: c.worldId,
+                blocked_recipes: c.blockedRecipes,
+                blocked_machines: c.blockedMachines,
+                resource_limits: c.resources || {},
+                least_resources: c.leastResources || 'off',
+                priority: c.priority || [],
+                // Deliberately not "depth" - that key already means
+                // quick/absolute and the server reads both.
+                ultra_depth: ultraDepthOf(c),
+                name: tab.name,
+            };
+        }
+
+        // ---- ULTRA ban depth ---------------------------------------------------
+        // Each extra level adds C(12, d) subsets *per variety*, so the sweep
+        // grows roughly three-fold a step. Showing the real number is the
+        // honest way to say "this one is going to take a while".
+
+        function ultraDepthOf(c) {
+            const d = Number(c && c.ultraDepth);
+            return [3, 4, 5].includes(d) ? d : 4;
+        }
+
+        function ultraComboCount(depth, lr) {
+            const R = 12;                       // limited resources in the game
+            const choose = (n, k) => {
+                let v = 1;
+                for (let i = 0; i < k; i++) v = v * (n - i) / (i + 1);
+                return Math.round(v);
+            };
+            let subsets = 0;
+            for (let k = 0; k <= depth; k++) subsets += choose(R, k);
+            const varieties = lr === 'hard' ? 1 : lr === 'soft' ? 2 : 3;
+            return subsets * varieties;
+        }
+
+        function renderUltraDepth(tab) {
+            const depth = ultraDepthOf(tab.calc);
+            document.querySelectorAll('#calc-depth-pick .dp').forEach(b => {
+                b.classList.toggle('on', Number(b.dataset.depth) === depth);
+            });
+
+            const note = document.getElementById('calc-ultra-note');
+            if (!note) return;
+            const on = tab.calc.depth === 'absolute';
+            note.style.display = on ? '' : 'none';
+            if (!on) return;
+
+            const n = ultraComboCount(depth, tab.calc.leastResources || 'off');
+            note.classList.toggle('danger', depth === 5);
+            note.textContent = depth === 5
+                ? 'Depth 5 \u2014 ' + n.toLocaleString() + ' combinations. Each extra level is '
+                  + 'exponentially slower and is not guaranteed to find anything better.'
+                : 'Depth ' + depth + ' \u2014 ' + n.toLocaleString() + ' combinations to try.';
+        }
+
+        document.getElementById('calc-depth-pick').addEventListener('click', e => {
+            const b = e.target.closest('.dp');
+            const tab = activeCalcTab();
+            if (!b || !tab) return;
+            tab.calc.ultraDepth = Number(b.dataset.depth);
+            saveState();
+            renderUltraDepth(tab);
+        });
+
+        // Cancel any pending or in-flight preview. Bumping the sequence makes a
+        // reply that is already on its way get discarded when it lands.
+        function stopPreview() {
+            clearTimeout(previewTimer);
+            previewSeq++;
+            setPreview(null);
+        }
+
+        function previewSoon() {
+            clearTimeout(previewTimer);
+            previewTimer = setTimeout(runPreview, 450);
+        }
+
+        async function runPreview() {
+            const tab = activeCalcTab();
+            if (!tab) return;
+            const payload = calcPayload(tab);
+            if (!payload.targets.length) { setPreview(null); return; }
+            const seq = ++previewSeq;
+            setPreview('pending');
+            try {
+                const res = await fetch('/api/calculate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const d = await res.json();
+                if (seq !== previewSeq) return;         // a newer edit won
+                if (!res.ok) { setPreview({ error: d.error || 'Not solvable' }); return; }
+                setPreview(d.stats);
+            } catch (e) {
+                if (seq === previewSeq) setPreview({ error: e.message });
+            }
+        }
+
+        function setPreview(stats) {
+            const el = document.getElementById('calc-preview');
+            if (!el) return;
+            if (stats === null) { el.textContent = ''; el.className = 'calc-hint'; return; }
+            if (stats === 'pending') { el.textContent = 'Working…'; el.className = 'calc-hint'; return; }
+            if (stats.error) {
+                el.textContent = stats.error;
+                el.className = 'calc-hint calc-warn';
+                return;
+            }
+            if (stats.info) {
+                el.textContent = stats.info;
+                el.className = 'calc-hint';
+                return;
+            }
+            el.className = 'calc-hint';
+            el.innerHTML = `<b style="color:var(--text-primary)">${fmtAmt(stats.power_mw)} MW</b>`
+                + ` &middot; ${stats.machines} machines`
+                + ` &middot; ${stats.steps} steps`
+                + ` &middot; ${stats.resource_types} resource type${stats.resource_types === 1 ? '' : 's'}`
+                + (stats.exact ? '' : ' <span style="opacity:.7">(estimate)</span>');
+        }
+
+        // ---- Solve ---------------------------------------------------------------
+
+        async function runCalculation() {
+            const tab = activeCalcTab(); if (!tab) return;
+            const c = tab.calc;
+            // Build it the same way the live preview does, so the two can never
+            // disagree - and so LMAX targets are not dropped for having no amount.
+            const targets = calcPayload(tab).targets;
+            if (!targets.length) { setCalcError('Add at least one target with an amount.'); return; }
+
+            // Stop the live estimate: its answer is stale the moment you press
+            // Calculate, and the result must be solved fresh rather than lifted
+            // out of the cache the preview just populated.
+            stopPreview();
+
+            const btn = document.getElementById('calc-run');
+            btn.disabled = true; btn.textContent = 'Calculating…'; setCalcError('');
+            try {
+                const res = await fetch('/api/calculate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...calcPayload(tab), no_cache: true }),
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || 'Calculation failed');
+                applyChain(d);
+            } catch (err) {
+                setCalcError(err.message);
+            } finally {
+                btn.disabled = false; btn.textContent = 'Calculate';
+            }
+        }
+        document.getElementById('calc-run').addEventListener('click', runCalculation);
+
+        // ---- ULTRA: background exhaustive search ---------------------------------
+
+        let ultraJob = null;
+        let ultraTimer = null;
+        let ultraKeeping = false;        // Keep in flight - hold the status line
+        let ultraClock = null;
+        let ultraStarted = 0;
+        let ultraLast = null;      // latest status, redrawn by the local clock
+
+        function ultraUi(running, text, pct) {
+            const btn = document.getElementById('calc-ultra');
+            const keep = document.getElementById('calc-keep');
+            const bar = document.getElementById('ultra-bar');
+            btn.textContent = running ? 'Cancel' : 'ULTRA';
+            btn.classList.toggle('btn-ultra', !running);
+            btn.classList.toggle('btn-secondary', running);
+            if (keep) {
+                keep.style.display = running ? '' : 'none';
+                if (!running) { keep.disabled = false; keep.textContent = 'Keep'; }
+            }
+            document.getElementById('calc-run').disabled = running;
+            bar.style.display = running ? '' : 'none';
+            bar.firstElementChild.style.width = (pct || 0) + '%';
+            if (text !== undefined) setPreview(text === null ? null : { info: text });
+        }
+
+        // The clock ticks locally rather than echoing the server's `elapsed`:
+        // polls land irregularly, so reflecting a server timestamp made the
+        // number jump instead of counting up once per second.
+        function ultraTick() {
+            if (!ultraJob || !ultraLast || ultraKeeping) return;
+            const d = ultraLast;
+            const secs = Math.round((Date.now() - ultraStarted) / 1000);
+            const pct = d.total ? (100 * d.checked / d.total) : 0;
+            const best = d.best ? ' — best: ' + ultraBestText(d.best) : '';
+            const stage = d.stage ? ' [' + d.stage + ']' : '';
+            ultraUi(true, 'Checked ' + d.checked + ' of ' + d.total
+                + ' (' + secs + 's)' + stage + best, pct);
+        }
+
+        // Always quote the amount alongside the count. A leftover of 0.02/min is
+        // a rounding tail, not a plumbing job, and saying only "1 byproduct"
+        // makes it sound like a broken promise.
+        function byproductText(b) {
+            const n = b.byproducts || 0;
+            if (!n) return 'no leftovers';
+            const amt = b.byproduct_total;
+            const fl = b.byproduct_fluid_total;
+            let t = n + ' leftover' + (n === 1 ? '' : 's');
+            if (amt !== undefined && amt !== null) t += ' (' + fmtAmt(amt) + '/min';
+            if (fl) t += ', ' + fmtAmt(fl) + ' fluid';
+            if (amt !== undefined && amt !== null) t += ')';
+            return t;
+        }
+
+        // Report the figures that matter for whatever is being optimised -
+        // output when maximising, tidy-clock share and leftovers for Easiest.
+        function ultraBestText(b) {
+            const tab = activeCalcTab();
+            const mode = tab ? tab.calc.mode : 'least_machines';
+            const bits = [];
+            if (mode === 'maximise' && b.outputs) {
+                const total = Object.values(b.outputs).reduce((a, c) => a + c, 0);
+                bits.push(fmtAmt(Math.round(total * 100) / 100) + '/min out');
+            }
+            if (mode === 'least_power') bits.push(fmtAmt(b.power_mw) + ' MW');
+            if (mode === 'least_machines') bits.push(b.machines + ' machines');
+            if (mode === 'least_steps') bits.push(b.steps + ' steps');
+            if (mode === 'easiest') {
+                bits.push(byproductText(b));
+                if (b.machine_groups) {
+                    bits.push(Math.round(100 * (b.nice_machines || 0) / b.machine_groups)
+                        + '% tidy clocks');
+                }
+            } else if (b.byproducts) {
+                bits.push(byproductText(b));
+            }
+            if (!bits.length) bits.push(b.machines + ' machines');
+            return bits.join(', ');
+        }
+
+        async function ultraPoll() {
+            // Pin the job for this round trip. Checking the global again after
+            // the await is what matters: pressing Keep or Cancel mid-flight used
+            // to let this reply land afterwards and either overwrite the plan
+            // just kept or report "cancelled before it found anything" over it.
+            const id = ultraJob;
+            if (!id) return;
+            let d;
+            try {
+                d = await (await fetch('/api/ultra/' + id)).json();
+            } catch (e) { return; }
+            if (ultraJob !== id) return;          // Keep/Cancel won the race
+
+            if (d.state === 'running') {
+                ultraLast = d;
+                ultraTick();
+                ultraTimer = setTimeout(ultraPoll, 1000);
+                return;
+            }
+
+            ultraJob = null; ultraLast = null;
+            clearInterval(ultraClock); ultraClock = null;
+            ultraUi(false, null, 0);
+            if (d.error) { setCalcError(d.error); return; }
+            if (!d.result) {
+                setCalcError(d.state === 'cancelled'
+                    ? 'Cancelled before it found anything.' : 'No plan found.');
+                return;
+            }
+            applyChain(d.result);
+            toast(d.state === 'cancelled'
+                ? `Stopped after ${d.checked} of ${d.total} — kept the best found`
+                : `Searched all ${d.total} combinations`);
+        }
+
+        // Shared by Calculate and ULTRA so a result lands identically either way.
+        function applyChain(d) {
+            const tab = activeCalcTab(); if (!tab) return;
+            tab.chain = { meta: d.meta, nodes: d.nodes, edges: d.edges, layers: d.layers };
+            tab.calc.stats = d.stats;
+            tab.ticked = new Set();
+            tab.dismissed = new Set();
+            saveState(); renderSidebar(); renderChain(); closeCalcPanel();
+        }
+
+        // Keep = stop searching and take the best plan found so far. This hits a
+        // dedicated endpoint that answers from the running snapshot, so it does
+        // not have to wait for the in-flight solves to run out their budget.
+        document.getElementById('calc-keep').addEventListener('click', async () => {
+            const keep = document.getElementById('calc-keep');
+            if (keep.disabled || ultraKeeping) return;       // already on it
+            if (!ultraJob) { toast('That search has already finished'); return; }
+            const id = ultraJob;
+
+            // Acknowledge the click first, and make sure nothing can undo that.
+            // ultraTick repaints the status line every second, so the old
+            // message vanished almost at once; a slow reply then left no sign
+            // the button had been pressed at all.
+            ultraKeeping = true;
+            clearTimeout(ultraTimer);
+            clearInterval(ultraClock); ultraClock = null;
+            keep.disabled = true;
+            keep.textContent = 'Keeping…';
+            setPreview({ info: 'Taking the best found so far…' });
+
+            const resume = () => {
+                ultraKeeping = false;
+                keep.disabled = false;
+                keep.textContent = 'Keep';
+                if (ultraJob) {                     // put the search back on air
+                    ultraClock = setInterval(ultraTick, 1000);
+                    ultraTimer = setTimeout(ultraPoll, 900);
+                }
+            };
+
+            try {
+                const res = await fetch('/api/ultra/' + id + '/keep', { method: 'POST' });
+                const d = await res.json();
+                if (!res.ok) {
+                    setCalcError(d.error || 'Nothing found yet');
+                    resume();
+                    return;
+                }
+                ultraJob = null; ultraLast = null; ultraKeeping = false;
+                ultraUi(false, null, 0);
+                applyChain(d.result);
+                toast(`Kept the best of ${d.checked} combination${d.checked === 1 ? '' : 's'}`);
+            } catch (e) {
+                setCalcError(e.message || 'Could not keep that result');
+                resume();
+            }
+        });
+
+        document.getElementById('calc-ultra').addEventListener('click', async () => {
+            const tab = activeCalcTab(); if (!tab) return;
+
+            if (ultraJob) {                                  // second press abandons
+                clearTimeout(ultraTimer);
+                clearInterval(ultraClock); ultraClock = null;
+                const id = ultraJob;
+                ultraJob = null; ultraLast = null; ultraKeeping = false;
+                ultraUi(false, null, 0);
+                try { await fetch('/api/ultra/' + id + '/cancel', { method: 'POST' }); }
+                catch (e) { }
+                toast('Deep search cancelled — chain left unchanged');
+                return;
+            }
+
+            const payload = calcPayload(tab);
+            if (!payload.targets.length) {
+                setCalcError('Add at least one target with an amount.'); return;
+            }
+            stopPreview(); setCalcError('');
+            try {
+                const res = await fetch('/api/ultra', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const d = await res.json();
+                if (!res.ok) { setCalcError(d.error || 'Could not start'); return; }
+                ultraJob = d.job_id;
+                ultraStarted = Date.now();
+                ultraLast = { checked: 0, total: 0, best: null, stage: '' };
+                ultraUi(true, 'Starting deep search…', 0);
+                clearInterval(ultraClock);
+                ultraClock = setInterval(ultraTick, 1000);
+                ultraTimer = setTimeout(ultraPoll, 900);
+            } catch (e) { setCalcError(e.message); }
+        });
+
+        // ---- Stats strip ---------------------------------------------------------
+
+        function renderCalcStats() {
+            let el = document.getElementById('calc-stats');
+            const wrap = document.getElementById('canvas-wrap');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'calc-stats';
+                wrap.parentNode.insertBefore(el, wrap);
+            }
+            const tab = getActiveTab();
+            if (!tab || !tab.chain) { el.classList.remove('visible'); return; }
+
+            const isCalc = tab.kind === 'calc';
+            const s = isCalc ? (tab.calc && tab.calc.stats) : chainStats(tab.chain);
+            if (!s) { el.classList.remove('visible'); return; }
+
+            const modeLabel = isCalc ? ({
+                least_power: 'Least power', least_machines: 'Least machines',
+                least_steps: 'Least steps', easiest: 'Easiest',
+                maximise: 'Maximise',
+            }[tab.calc.mode] || tab.calc.mode) : 'Imported';
+
+            // "easiest" may deliberately come in under the requested amount.
+            const short = isCalc && s.requested ? Object.keys(s.requested).filter(k =>
+                (s.outputs?.[k] ?? 0) < s.requested[k] - 0.01) : [];
+
+            el.innerHTML = `
+              <span><b>${modeLabel}</b>${isCalc ? ` &middot; ${tab.calc.depth === 'absolute' ? 'Absolute' : 'Quick'}` : ''}</span>
+              <span>Power <b>${fmtAmt(s.power_mw)} MW</b></span>
+              <span>Machines <b>${s.machines}</b>${s.extractors ? ` <span style="opacity:.7">(incl. ${s.extractors} extractor${s.extractors === 1 ? '' : 's'})</span>` : ''}</span>
+              <span>Steps <b>${s.steps}</b></span>
+              ${s.byproducts !== undefined ? `<span>Spare <b>${byproductText(s)}</b></span>` : ''}
+              ${s.machine_groups ? `<span>Tidy clocks <b>${Math.round(100 * (s.nice_machines || 0) / s.machine_groups)}%</b></span>` : ''}
+              ${short.length ? `<span class="calc-warn">under target on ${short.length} item${short.length === 1 ? '' : 's'}</span>` : ''}
+              <span class="spacer">
+                ${isCalc ? '<button class="btn btn-secondary" id="calc-edit">Edit</button>' : ''}
+                <button class="btn btn-secondary" id="calc-export">${isCalc ? 'Export' : 'Copy link'}</button>
+              </span>`;
+            el.classList.add('visible');
+            const edit = el.querySelector('#calc-edit');
+            if (edit) edit.addEventListener('click', openCalcPanel);
+            el.querySelector('#calc-export').addEventListener('click', () => exportTab(tab));
+        }
+
+        // Imported chains carry no stats of their own, so derive the same three
+        // figures from the graph. Machine power comes from the reference data,
+        // which keys buildings as Build_* while the share solver says Desc_*.
+        function chainStats(chain) {
+            let machines = 0, steps = 0, power = 0, extractors = 0;
+            const powerOf = (cls) => {
+                if (!REF || !cls) return 0;
+                const want = String(cls).replace(/^Desc_/, 'Build_');
+                const m = REF.machines.find(x => x.id === want || x.id === cls);
+                return m ? (m.power || 0) : 0;
+            };
+            chain.nodes.forEach(n => {
+                if (n.kind === 'recipe') {
+                    steps++;
+                    machines += Math.ceil((n.count || 0) - 1e-9);
+                    power += (n.count || 0) * powerOf(n.machine);
+                } else if (n.kind === 'raw') {
+                    extractors += Math.ceil((n.amount || 0) / 120 - 1e-9);
+                }
+            });
+            return {
+                power_mw: Math.round(power * 100) / 100,
+                machines: machines + extractors,
+                extractors, steps,
+            };
+        }
+
+        // ---- Export / share ------------------------------------------------------
+
+        function exportTab(tab) {
+            // An imported chain is already shareable - hand back its original link.
+            if (tab.kind !== 'calc' && tab.share) {
+                copyText(tab.share, 'Share link copied');
+                return;
+            }
+            // A calculated chain is described entirely by its settings, so the
+            // compact form is the settings, not the solved graph.
+            const compact = calcToCompact(tab);
+            const id = compactToId(compact);
+            const saveJson = () => {
+                downloadBlob(new Blob([JSON.stringify(compact, null, 2)],
+                    { type: 'application/json' }),
+                    (tab.name || 'production') + '.json');
+                toast('Saved as JSON');
+            };
+            // Prefer the short id, but never leave the user with nothing: if the
+            // clipboard refuses, fall back to handing them the file.
+            if (id && id.length <= 1800) {
+                Promise.resolve(copyText(id, 'Calculator ID copied — import it from the + menu'))
+                    .then(ok => { if (!ok) saveJson(); });
+            } else {
+                saveJson();
+            }
+        }
+
+        // A calculated chain is fully described by its settings, so that is what
+        // travels - not the solved graph. Everything that changes the result has
+        // to be in here, or an imported copy silently solves differently.
+        function calcToCompact(tab) {
+            const c = tab.calc;
+            return {
+                v: 3,
+                n: tab.name,
+                m: c.mode,
+                d: c.depth,
+                lr: c.leastResources || 'off',
+                lm: !!c.linkedMax,
+                ud: ultraDepthOf(c),
+                pr: c.priority || [],
+                // Encode the target type explicitly. The old form only checked
+                // for 'maximize', so an LMAX target fell through to the exact
+                // branch and shipped [item, undefined] -> null, losing both its
+                // type and its amount on the way back in.
+                t: c.targets.map(t => {
+                    if (t.type === 'maximize') return [t.item, 'x'];
+                    if (t.type === 'linked') return [t.item, 'l'];
+                    return [t.item, (typeof t.amount === 'number' && isFinite(t.amount))
+                        ? t.amount : 0];
+                }),
+                b: c.blockedRecipes || [],
+                bm: c.blockedMachines || [],
+                r: c.resources || {},
+            };
+        }
+
+        function compactToId(compact) {
+            try {
+                // btoa needs latin1, so round-trip through UTF-8 escaping first.
+                return btoa(unescape(encodeURIComponent(JSON.stringify(compact))))
+                    .replace(/=+$/, '');
+            } catch (e) { return null; }
+        }
+
+        function compactToCalc(c) {
+            if (!c || ![1, 2, 3].includes(c.v)) throw new Error('Unrecognised calculator data.');
+            const calc = defaultCalc();
+            calc.depth = c.d || 'quick';
+            calc.leastResources = c.lr || 'off';
+            calc.linkedMax = !!c.lm;
+            calc.ultraDepth = [3, 4, 5].includes(Number(c.ud)) ? Number(c.ud) : 4;
+            calc.blockedRecipes = c.b || [];
+            calc.blockedMachines = c.bm || [];      // v1 exports did not carry these
+            calc.resources = c.r || {};
+
+            // Keep the goal and the priority list consistent whichever the
+            // export happened to carry. Assigning priority[0] unconditionally
+            // threw away the saved mode on older exports that have no list.
+            const known = ['least_power', 'least_machines', 'least_steps',
+                           'easiest', 'maximise'];
+            if (Array.isArray(c.pr) && c.pr.length) {
+                calc.priority = c.pr.filter(m => known.includes(m));
+                known.forEach(m => { if (!calc.priority.includes(m)) calc.priority.push(m); });
+            } else if (c.m && known.includes(c.m)) {
+                calc.priority = [c.m, ...known.filter(m => m !== c.m)];
+            }
+            calc.mode = calc.priority[0];
+
+            calc.targets = (c.t || []).map(([item, amt]) => {
+                if (amt === 'x') return { item, type: 'maximize' };
+                if (amt === 'l') return { item, type: 'linked' };
+                const n = Number(amt);
+                return { item, type: 'exact',
+                         amount: isFinite(n) && n > 0 ? n : 60 };
+            });
+            return { name: c.n || 'Calculated production', calc };
+        }
+
+        // Copy, honestly. The old version reported success unconditionally, so a
+        // failed copy looked like it had worked and nothing reached the clipboard.
+        //
+        // execCommand is tried FIRST and synchronously: it only works inside the
+        // gesture that triggered it, and awaiting the async clipboard API first
+        // burns that window, so the fallback could never succeed either.
+        function copyText(text, msg) {
+            if (legacyCopy(text)) { toast(msg); return Promise.resolve(true); }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                return navigator.clipboard.writeText(text)
+                    .then(() => { toast(msg); return true; })
+                    .catch(() => { toast('Could not reach the clipboard'); return false; });
+            }
+            toast('Could not reach the clipboard');
+            return Promise.resolve(false);
+        }
+
+        function legacyCopy(text) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                // Must be in the document and selectable, or select() is a no-op.
+                ta.setAttribute('readonly', '');
+                ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
+                document.body.appendChild(ta);
+                ta.select();
+                ta.setSelectionRange(0, text.length);
+                const ok = document.execCommand('copy');
+                ta.remove();
+                return ok;
+            } catch (e) { return false; }
+        }
+
+        // Download a blob. The anchor has to be in the document for the click to
+        // count, and the object URL must outlive the click - revoking it straight
+        // away cancelled the download before it began.
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 4000);
+        }
+
+        function toast(msg) {
+            let t = document.getElementById('toast');
+            if (!t) {
+                t = document.createElement('div');
+                t.id = 'toast';
+                t.style.cssText = 'position:fixed;bottom:22px;left:50%;transform:translateX(-50%);'
+                    + 'background:var(--bg-raised);border:1px solid var(--border);color:var(--text-primary);'
+                    + 'padding:9px 16px;border-radius:9px;font-size:12px;z-index:200;opacity:0;'
+                    + 'transition:opacity .18s;pointer-events:none;box-shadow:0 6px 22px rgba(0,0,0,.3)';
+                document.body.appendChild(t);
+            }
+            t.textContent = msg;
+            t.style.opacity = '1';
+            clearTimeout(t._h);
+            t._h = setTimeout(() => { t.style.opacity = '0'; }, 1900);
+        }
+
+        // Restore a calculator from a pasted ID or an exported .json body.
+        function calcFromId(text) {
+            const raw = String(text).trim();
+            let c;
+            if (raw.startsWith('{')) {
+                c = JSON.parse(raw);                     // exported file contents
+            } else {
+                // atob tolerates the stripped '=' padding we write out.
+                c = JSON.parse(decodeURIComponent(escape(atob(raw))));
+            }
+            return compactToCalc(c);
+        }
+
+        function createCalcTab(name, calc, openPanel) {
+            const tab = {
+                id: genId(), kind: 'calc', name, share: null,
+                chain: null, calc,
+                ticked: new Set(), dismissed: new Set(),
+            };
+            state.tabs.push(tab);
+            state.activeTab = tab.id;
+            saveState(); renderSidebar(); renderChain();
+            document.getElementById('add-prompt').classList.remove('open');
+            if (openPanel !== false) openCalcPanel();
+            return tab;
+        }
+
+        // ---- Add-prompt: pick which kind of tab ----------------------------------
+
+        let addKind = 'share';
+        document.getElementById('add-kind').addEventListener('click', e => {
+            const b = e.target.closest('.seg-btn'); if (!b) return;
+            addKind = b.dataset.kind;
+            document.querySelectorAll('#add-kind .seg-btn').forEach(x =>
+                x.classList.toggle('active', x === b));
+            document.querySelectorAll('[data-kindpane]').forEach(p =>
+                p.style.display = p.dataset.kindpane === addKind ? '' : 'none');
+            document.getElementById('btn-add-confirm').textContent =
+                addKind === 'calc' ? 'Create calculator'
+                    : addKind === 'import' ? 'Import' : 'Load chain';
+            document.getElementById('share-error').classList.remove('visible');
+        });
+
+        // Wrap the share-only add flow so it can also create calculator tabs.
+        const _confirmShare = confirmAddTab;
+        confirmAddTab = async function () {
+            if (addKind === 'import') return confirmImport();
+            if (addKind !== 'calc') return _confirmShare();
+
+            const err = document.getElementById('share-error');
+            const nameEl = document.getElementById('calc-name-input');
+            const raw = nameEl.value.trim();
+            err.classList.remove('visible');
+
+            try {
+                await loadReference();
+            } catch (e) {
+                err.textContent = e.message; err.classList.add('visible'); return;
+            }
+            createCalcTab(raw || 'Calculated production', defaultCalc());
+            nameEl.value = '';
+        };
+        document.getElementById('btn-add-confirm').addEventListener('click', e => {
+            if (addKind === 'calc' || addKind === 'import') {
+                e.stopImmediatePropagation();
+                confirmAddTab();
+            }
+        }, true);
+
+        // ---- Import a calculator (pasted ID or exported .json) -------------------
+
+        async function applyImport(text) {
+            const err = document.getElementById('share-error');
+            err.classList.remove('visible');
+            let parsed;
+            try {
+                parsed = calcFromId(text);
+            } catch (e) {
+                err.textContent = 'That does not look like a calculator ID or export file.';
+                err.classList.add('visible');
+                return false;
+            }
+            try {
+                await loadReference();
+            } catch (e) {
+                err.textContent = e.message; err.classList.add('visible'); return false;
+            }
+            createCalcTab(parsed.name, parsed.calc);
+            document.getElementById('import-input').value = '';
+            document.getElementById('import-note').textContent = '';
+            toast('Imported — press Calculate to solve it');
+            return true;
+        }
+
+        function confirmImport() {
+            const val = document.getElementById('import-input').value.trim();
+            if (!val) {
+                const err = document.getElementById('share-error');
+                err.textContent = 'Paste an ID, or load an exported .json file.';
+                err.classList.add('visible');
+                return;
+            }
+            return applyImport(val);
+        }
+
+        document.getElementById('import-file').addEventListener('change', async e => {
+            const f = e.target.files[0];
+            if (!f) return;
+            document.getElementById('import-note').textContent = f.name;
+            try {
+                await applyImport(await f.text());
+            } catch (err) {
+                document.getElementById('import-note').textContent = 'Could not read that file.';
+            }
+            e.target.value = '';
+        });
+
+        document.getElementById('import-input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); confirmImport(); }
+        });
+
+        // =====================================================================
+        // BLOCK F: Top-right actions (Copy / Export) and free tile dragging
+        // =====================================================================
+
+        // ---- Floating action bar -------------------------------------------------
+
+        function ensureActionBar() {
+            let bar = document.getElementById('action-bar');
+            if (bar) return bar;
+            bar = document.createElement('div');
+            bar.id = 'action-bar';
+            bar.style.cssText = 'position:absolute;top:12px;right:14px;z-index:30;display:flex;'
+                + 'gap:8px;align-items:center';
+            document.getElementById('canvas-wrap').appendChild(bar);
+            return bar;
+        }
+
+        function renderActionBar() {
+            const bar = ensureActionBar();
+            const tab = getActiveTab();
+            bar.innerHTML = '';
+            if (!tab || !tab.chain) { bar.style.display = 'none'; return; }
+            bar.style.display = 'flex';
+
+            const full = document.createElement('button');
+            full.className = 'btn ' + (fullView ? 'btn-primary' : 'btn-secondary');
+            full.textContent = fullView ? 'Full chain: on' : 'Full chain';
+            full.title = 'Show every layer at once, including outputs and '
+                + 'byproducts you already acknowledged';
+            full.addEventListener('click', () => {
+                fullView = !fullView;
+                try { localStorage.setItem('full_view', fullView ? '1' : '0'); } catch (e) { }
+                renderChain();
+            });
+            bar.appendChild(full);
+
+            // Drag-tiles toggle - off by default, and explicitly escapable
+            // because free positioning can fight the layered layout.
+            const drag = document.createElement('button');
+            drag.className = 'btn btn-secondary';
+            drag.textContent = dragTilesOn ? 'Dragging: on' : 'Dragging: off';
+            drag.title = 'Move cards freely; connection lines follow';
+            drag.addEventListener('click', () => {
+                dragTilesOn = !dragTilesOn;
+                if (!dragTilesOn) clearTileOffsets();
+                try { localStorage.setItem('drag_tiles', dragTilesOn ? '1' : '0'); } catch (e) { }
+                renderActionBar(); applyDragMode();
+            });
+            bar.appendChild(drag);
+
+            if (dragTilesOn) {
+                const reset = document.createElement('button');
+                reset.className = 'btn btn-secondary';
+                reset.textContent = 'Reset layout';
+                reset.addEventListener('click', () => { clearTileOffsets(); scheduleDrawLines(); });
+                bar.appendChild(reset);
+            }
+
+            // Chains are cached in localStorage, so a tab solved before a data
+            // fix keeps the old numbers forever. Re-fetch on demand, carrying
+            // tick/dismiss progress across so nothing is lost.
+            if (tab.kind !== 'calc' && tab.share) {
+                const refresh = document.createElement('button');
+                refresh.className = 'btn btn-secondary';
+                refresh.textContent = 'Refresh';
+                refresh.title = 'Re-fetch this chain with the latest game data, keeping your progress';
+                refresh.addEventListener('click', () => refreshChain(tab, refresh));
+                bar.appendChild(refresh);
+            }
+
+            const copy = document.createElement('button');
+            copy.className = 'btn btn-primary';
+            copy.textContent = (tab.kind === 'calc') ? 'Export' : 'Copy';
+            copy.title = (tab.kind === 'calc')
+                ? 'Copy a shareable calculator ID (or download JSON if too long)'
+                : 'Copy the original satisfactorytools.com link';
+            copy.addEventListener('click', () => exportTab(tab));
+            bar.appendChild(copy);
+        }
+
+        // ---- Re-fetch a chain, preserving progress --------------------------------
+
+        // Node ids are assigned in solver-response order, so they are not stable
+        // enough to carry ticks across a re-solve. Match on what the node *is*
+        // instead.
+        function nodeSignature(n) {
+            return [n.kind, n.recipe || n.item || n.label, n.machine || ''].join('|');
+        }
+
+        async function refreshChain(tab, btn) {
+            const old = btn.textContent;
+            btn.disabled = true; btn.textContent = 'Refreshing…';
+            try {
+                const fresh = await fetchChain(tab.share);
+                const oldById = {};
+                (tab.chain ? tab.chain.nodes : []).forEach(n => { oldById[n.id] = n; });
+
+                const sigToNew = {};
+                fresh.nodes.forEach(n => { sigToNew[nodeSignature(n)] = n.id; });
+
+                const carry = (set) => {
+                    const out = new Set();
+                    set.forEach(id => {
+                        const n = oldById[id];
+                        if (!n) return;
+                        const newId = sigToNew[nodeSignature(n)];
+                        if (newId !== undefined) out.add(newId);
+                    });
+                    return out;
+                };
+
+                const ticked = carry(tab.ticked);
+                const dismissed = carry(tab.dismissed);
+                const lost = (tab.ticked.size + tab.dismissed.size) - (ticked.size + dismissed.size);
+
+                tab.chain = fresh;
+                tab.ticked = ticked;
+                tab.dismissed = dismissed;
+                if (fresh.meta && fresh.meta.name) tab.name = fresh.meta.name;
+                saveState(); renderSidebar(); renderChain();
+                toast(lost > 0
+                    ? `Refreshed — ${lost} tick(s) could not be matched`
+                    : 'Refreshed with the latest game data');
+            } catch (e) {
+                toast(e.message || 'Refresh failed');
+            } finally {
+                btn.disabled = false; btn.textContent = old;
+            }
+        }
+
+        // ---- Free tile dragging --------------------------------------------------
+        // Positions are deliberately NOT persisted: leaving the chain and coming
+        // back resets them, so there is nothing to clean up in localStorage.
+
+        let dragTilesOn = false;
+        try { dragTilesOn = localStorage.getItem('drag_tiles') === '1'; } catch (e) { }
+
+        // Keyed by node id, not by element: every render rebuilds the cards, so
+        // an element-keyed map silently lost the layout on any click that
+        // re-rendered (ticking a card, dismissing a byproduct...).
+        const tileOffsets = new Map();          // nodeId -> {dx, dy}
+
+        function tileKey(el) { return el && el.dataset ? el.dataset.nodeId : null; }
+
+        function applyTileOffsets() {
+            if (!tileOffsets.size) return;
+            document.querySelectorAll('#canvas .card-wrap').forEach(el => {
+                const o = tileOffsets.get(tileKey(el));
+                if (o) {
+                    el.style.transform = `translate(${o.dx}px, ${o.dy}px)`;
+                    el.style.zIndex = '15';
+                }
+            });
+        }
+
+        function clearTileOffsets() {
+            document.querySelectorAll('#canvas .card-wrap').forEach(el => {
+                el.style.transform = '';
+                el.style.zIndex = '';
+            });
+            tileOffsets.clear();
+            scheduleDrawLines();
+        }
+
+        function applyDragMode() {
+            document.querySelectorAll('#canvas .card-wrap').forEach(el => {
+                el.style.cursor = dragTilesOn ? 'grab' : '';
+            });
+        }
+
+        function beginTileDrag(e) {
+            if (!dragTilesOn) return;
+            if (e.button !== 0) return;
+            const el = e.target.closest('#canvas .card-wrap');
+            if (!el) return;
+            e.preventDefault();
+            e.stopPropagation();               // don't let the canvas pan handler grab it
+
+            const key = tileKey(el);
+            const start = tileOffsets.get(key) || { dx: 0, dy: 0 };
+            const scale = (typeof _scale === 'number' && _scale) ? _scale : 1;
+            const ox = e.clientX, oy = e.clientY;
+            let movedFar = false;
+            el.style.cursor = 'grabbing';
+            el.style.zIndex = '15';
+
+            function move(ev) {
+                // Only count movement from THIS press. Comparing against the
+                // card's accumulated offset would mean every card you have ever
+                // dragged stays permanently unclickable.
+                if (Math.abs(ev.clientX - ox) > 3 || Math.abs(ev.clientY - oy) > 3) {
+                    movedFar = true;
+                }
+                const dx = start.dx + (ev.clientX - ox) / scale;
+                const dy = start.dy + (ev.clientY - oy) / scale;
+                tileOffsets.set(key, { dx, dy });
+                el.style.transform = `translate(${dx}px, ${dy}px)`;
+                scheduleDrawLines();           // lines follow the tile
+            }
+            function up() {
+                el.style.cursor = dragTilesOn ? 'grab' : '';
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                // A genuine drag should not also tick the card; a plain click
+                // (no real movement) still should.
+                suppressClickFor = movedFar ? el : null;
+                scheduleDrawLines();
+            }
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+        }
+
+        // Capture phase so this runs before the canvas pan/tick handlers.
+        document.getElementById('canvas').addEventListener('pointerdown', beginTileDrag, true);
+
+        // A tick would otherwise fire at the end of a drag. Only the click that
+        // closes an actual drag is swallowed - the flag is cleared immediately,
+        // so the next click on the same card ticks it as normal.
+        let suppressClickFor = null;
+        document.getElementById('canvas').addEventListener('click', e => {
+            if (!suppressClickFor) return;
+            const el = e.target.closest('#canvas .card-wrap');
+            if (el && el === suppressClickFor) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+            }
+            suppressClickFor = null;
+        }, true);
+
+        // Hook the action bar + drag mode into every re-render.
+        const _renderChainBase = renderChain;
+        renderChain = function () {
+            _renderChainBase.apply(this, arguments);
+            // The DOM is new, so put moved cards back where the user left them
+            // rather than snapping the whole layout home on every tick.
+            applyTileOffsets();
+            renderActionBar();
+            applyDragMode();
+        };
+        renderChain();
 
     </script>
 </body>
