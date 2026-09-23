@@ -146,6 +146,14 @@ def _job_view(job_id, running_states=("running",)):
     st = job_store.read_json(job_id, "status")
     if st is None:
         return None
+    # A child that was told to stop and is still going gets ended here - the
+    # worker that asked for the stop does not own the process, so without this
+    # a cancelled search keeps a core busy indefinitely.
+    # Not gated on the recorded state: a runner can write "cancelled" and then
+    # fail to exit, which is exactly the case that leaked a busy process.
+    if job_store.stop_requested(job_id) and not st.get("reaped"):
+        if job_store.enforce_stop(job_id):
+            st = job_store.read_json(job_id, "status") or st
     if st.get("state") in running_states:
         quiet = time.time() - float(st.get("alive") or st.get("started") or 0)
         if quiet > _STALE_AFTER:

@@ -96,11 +96,94 @@ def read_json(job_id: str, name: str):
 # A flag file rather than a signal: the worker asked to cancel is usually not
 # the one that started the job, so it has nothing to signal.
 
+STOP_GRACE = 20          # seconds a child gets to stop before it is killed
+
+
 def request_stop(job_id: str) -> None:
     try:
-        open(os.path.join(_ensure(job_dir(job_id)), "cancel"), "w").close()
+        with open(os.path.join(_ensure(job_dir(job_id)), "cancel"), "w") as f:
+            f.write(str(time.time()))
     except OSError:
         pass
+
+
+def _pid_is_this_job(pid: int, job_id: str) -> bool:
+    """
+    Is `pid` still the runner for this job?
+
+    Checked against the process's own command line rather than trusting the
+    number: pids get reused, and killing an unrelated process would be far
+    worse than leaving a stray one running.
+    """
+    try:
+        if os.name == "nt":
+            # PowerShell, not wmic: wmic is deprecated and absent from recent
+            # Windows builds, and its FileNotFoundError was being swallowed -
+            # so this always said "not my process" and nothing was ever killed.
+            import subprocess
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}')"
+                 f".CommandLine"],
+                capture_output=True, text=True, timeout=20).stdout
+            return job_id in out
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return job_id.encode() in f.read()
+    except Exception:                                     # noqa: BLE001
+        return False
+
+
+def enforce_stop(job_id: str, grace: float = STOP_GRACE) -> bool:
+    """
+    Kill a child that was asked to stop and did not.
+
+    The worker that asks for the stop is usually not the one that started the
+    job, so nobody owns the process - and a search whose solver threads are
+    still running will not exit on its own. Any worker that notices an overdue
+    job can end it.
+    """
+    try:
+        path = os.path.join(job_dir(job_id), "cancel")
+        with open(path, encoding="utf-8") as f:
+            asked = float((f.read() or "0").strip() or 0)
+    except (OSError, ValueError):
+        return False
+    if not asked or time.time() - asked < grace:
+        return False
+
+    st = read_json(job_id, "status") or {}
+    pid = st.get("pid")
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if not _pid_is_this_job(pid, job_id):
+        # Gone already (or the pid was recycled). Mark it so later polls stop
+        # paying for a process lookup on every request.
+        st["reaped"] = True
+        try:
+            write_json(job_id, "status", st)
+        except OSError:
+            pass
+        return False
+    try:
+        if os.name == "nt":
+            import subprocess
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                           capture_output=True, timeout=10)
+        else:
+            import signal
+            os.kill(pid, signal.SIGKILL)
+    except Exception:                                     # noqa: BLE001
+        return False
+
+    st["state"] = "cancelled"
+    st["reaped"] = True
+    st["ended"] = time.time()
+    st["alive"] = time.time()
+    try:
+        write_json(job_id, "status", st)
+    except OSError:
+        pass
+    return True
 
 
 def stop_requested(job_id: str) -> bool:

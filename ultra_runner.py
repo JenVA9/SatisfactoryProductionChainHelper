@@ -31,7 +31,8 @@ def main(job_id):
 
     status = {"state": "running", "checked": 0, "total": 0, "stage": "Starting",
               "best": None, "error": None,
-              "started": payload.get("started") or started}
+              "started": payload.get("started") or started,
+              "pid": os.getpid()}
     last_write = [0.0]
 
     def flush(force=False):
@@ -125,8 +126,26 @@ def main(job_id):
         flush(force=True)
 
 
+def _run_and_quit(job_id):
+    """
+    Do the work, then leave immediately.
+
+    A normal return waits on every non-daemon thread, and the solver leaves a
+    pile of them behind - a search that had been cancelled carried on burning a
+    core for over two hours after it had already written its result. Everything
+    this process owns is flushed to the job store before this point, and those
+    writes are atomic, so there is nothing left to tidy.
+    """
+    try:
+        main(job_id)
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("usage: python -m ultra_runner <job_id>", file=sys.stderr)
         raise SystemExit(2)
-    main(sys.argv[1])
+    _run_and_quit(sys.argv[1])

@@ -106,6 +106,42 @@ NICE_MIN_SCORE = 0.2
 # it, so every maximised target is pinned at least this high.
 MIN_MAXIMISE_RATE = 0.01
 
+# A machine count below this is solver noise, not a decision. HiGHS will
+# happily leave a recipe running at 0.0000016 of a machine to soak up a
+# rounding residue; that became a real card, edge and layer in the chain,
+# advertising 0.0003/min of something nothing uses. Below 1% clock nothing is
+# buildable anyway, so a count this small can only be an artefact.
+NOISE_MACHINE_COUNT = 1e-3
+
+# --- LMAX fairness ---------------------------------------------------------
+# How evenly linked targets share what is left once everyone is guaranteed the
+# equal-split level. This is the alpha in alpha-fair allocation:
+#   0   - maximise the raw total; whichever target is cheapest takes everything
+#   1   - proportional (Nash) fairness; a target's marginal value is 1/its rate
+#   >1  - progressively flatter, approaching leximin as it grows
+LMAX_FAIRNESS = 1.0
+
+# How linked targets share whatever is spare once everyone is guaranteed the
+# equal-split level:
+#   "headroom"     - raise every target by the same fraction of its own
+#                    remaining room, so the one that could have gone highest
+#                    ends up highest and they all move together
+#   "proportional" - alpha-fair by cost; the cheapest target takes the spare
+#                    capacity and the rest stay on the floor
+LMAX_MODE = "headroom"
+
+# --- letting MAX / LMAX output flex ----------------------------------------
+# How far a settled MAX/LMAX level may be walked back, smallest step first, and
+# how much the mode's own metric has to improve before giving up that output is
+# considered worth it. Exact targets are never touched.
+MAX_REDUCE_STEPS = (0.02, 0.05, 0.10)
+MAX_REDUCE_MIN_GAIN = 0.05
+
+# The fairness curve is concave, so it is fed to the LP as a piecewise-linear
+# approximation: geometric segments between each target's guaranteed floor and
+# the most it could ever reach on its own.
+LMAX_SEGMENTS = 28
+
 # Extraction is not free: pulling a resource costs extractor buildings and
 # power. Without this the solver treats unlimited water as costless and will
 # happily pump tens of thousands a minute to save one machine downstream.
@@ -284,6 +320,187 @@ def _demand_vector(m: Model, fixed: dict):
 # Satisfy exact targets, then equalise + prioritise the maximised ones
 # ---------------------------------------------------------------------------
 
+def _solo_ceiling(m: Model, floors: dict, item: str, bnds, block):
+    """The most `item` could reach if only the exact targets had to be met."""
+    n = m.n_var
+    dem = _demand_vector(m, floors)
+    # The row for the item being measured carries no demand of its own: the
+    # constraint is net - t >= 0, so t IS the rate. Leaving a floor in there
+    # instead gives net - t >= floor, i.e. t one whole floor short of the truth
+    # - invisible at 100k/min, but a 0.3% haircut on a target that runs at 3.
+    dem[m.item_ix[item]] = 0.0
+    A = np.hstack([block, np.zeros((block.shape[0], 1))])
+    A[m.item_ix[item], n] = -1.0
+    c = np.zeros(n + 1)
+    c[n] = -1.0
+    r = linprog(c, A_ub=-A, b_ub=-dem, bounds=bnds, method="highs")
+    return max(0.0, float(r.x[n])) if r.success else 0.0
+
+
+def _equal_split_level(m: Model, floors: dict, items: list, bnds, block):
+    """The common level every one of `items` can reach together - the floor."""
+    n = m.n_var
+    dem = _demand_vector(m, floors)
+    for it in items:                       # same reasoning as _solo_ceiling
+        dem[m.item_ix[it]] = 0.0
+    A = np.hstack([block, np.zeros((block.shape[0], 1))])
+    for it in items:
+        A[m.item_ix[it], n] = -1.0
+    c = np.zeros(n + 1)
+    c[n] = -1.0
+    r = linprog(c, A_ub=-A, b_ub=-dem, bounds=bnds, method="highs")
+    return max(0.0, float(r.x[n])) if r.success else 0.0
+
+
+def _headroom_levels(m: Model, exact: dict, items: list, floor: float,
+                     ceilings: dict):
+    """
+    Raise every target by the same fraction of its own remaining room, then
+    lock whatever has run out and carry on with the rest.
+
+    A single pass is not enough. One shared fraction couples every target, so a
+    target whose ceiling is twenty times larger needs a huge absolute rise for
+    any fraction at all - the shared resources run out immediately, the
+    fraction pins near zero, and everything lands flat on the floor. That cost
+    40% of the output on a real oil chain.
+
+    Iterating fixes it: targets with comparable room rise together and stay
+    graded by room (the 3 / 3.25 / 3.5 shape), and once the small ones top out
+    the roomy ones keep climbing on their own instead of being held back.
+    """
+    live = [it for it in items if it in m.item_ix]
+    if not live:
+        return {}
+
+    base = max(floor, MIN_MAXIMISE_RATE)
+    current = {it: base for it in live}
+    remaining = list(live)
+    n = m.n_var
+    block = _balance_rows(m)
+    bnds_plain = list(zip(*_bounds(m, extra=1)))
+
+    for _round in range(len(live) + 2):
+        if not remaining:
+            break
+
+        # Room left for each target, with everything else held where it is.
+        room = {}
+        for it in remaining:
+            floors = dict(exact)
+            for o in live:
+                if o != it:
+                    floors[o] = current[o]
+            ceil = _solo_ceiling(m, floors, it, bnds_plain, block)
+            room[it] = max(0.0, ceil - current[it])
+
+        movable = [it for it in remaining if room[it] > max(1e-9, current[it] * 1e-9)]
+        if not movable:
+            break
+
+        lo, hi = _bounds(m, extra=1)
+        hi[n] = 1.0
+        A = np.hstack([block, np.zeros((block.shape[0], 1))])
+        for it in movable:
+            A[m.item_ix[it], n] = -room[it]
+        c = np.zeros(n + 1)
+        c[n] = -1.0
+
+        floors = dict(exact)
+        for it in live:
+            floors[it] = current[it]
+        dem = _demand_vector(m, floors)
+
+        res = linprog(c, A_ub=-A, b_ub=-dem, bounds=list(zip(lo, hi)),
+                      method="highs")
+        if not res.success:
+            break
+        t = min(1.0, max(0.0, float(res.x[n])))
+        if t <= 1e-9:
+            break
+
+        for it in movable:
+            current[it] = current[it] + room[it] * t
+
+        # Whatever has reached its own ceiling drops out at the top of the next
+        # round, where the room is recomputed anyway - re-measuring every
+        # ceiling again here just doubled the solve count for the same answer.
+        remaining = list(movable)
+
+    return current
+
+
+def _fair_levels(m: Model, exact: dict, items: list, floor: float, ceilings: dict):
+    """
+    Share capacity above `floor` by alpha-fair allocation.
+
+    One extra variable per target per segment. Segment k of target i may only be
+    used once the segments below it are full, which the LP arranges for free
+    because the weights decrease - so the piecewise sum behaves like a concave
+    utility without needing any integer variables.
+    """
+    n = m.n_var
+    block = _balance_rows(m)
+    live = [it for it in items if it in m.item_ix]
+
+    # Segment layout per target: geometric from its floor to its own ceiling.
+    segs = {}
+    for it in live:
+        base = max(floor, MIN_MAXIMISE_RATE)
+        top = max(ceilings.get(it, base), base * (1.0 + 1e-9))
+        if top <= base * (1.0 + 1e-9):
+            segs[it] = []                       # no headroom; pinned at floor
+            continue
+        ratio = (top / base) ** (1.0 / LMAX_SEGMENTS)
+        edges = [base * (ratio ** k) for k in range(LMAX_SEGMENTS + 1)]
+        segs[it] = [(edges[k], edges[k + 1] - edges[k])
+                    for k in range(LMAX_SEGMENTS)]
+
+    n_seg = sum(len(v) for v in segs.values())
+    if n_seg == 0:
+        return {it: floor for it in live}
+
+    total = n + n_seg
+    lo = np.zeros(total)
+    hi = np.full(total, np.inf)
+    hi[m.n_r:m.n_r + m.n_raw] = m.raw_limits
+
+    A = np.zeros((len(m.items), total))
+    A[:, :n] = block
+    c = np.zeros(total)
+
+    col = n
+    for it in live:
+        row = m.item_ix[it]
+        for left, width in segs[it]:
+            A[row, col] = -1.0                  # net_i - sum(segments) >= floor
+            hi[col] = width
+            # Marginal value of output at `left`. alpha=1 gives 1/left, i.e.
+            # proportional fairness; the scale cancels, so targets measured in
+            # thousands and targets measured in ones compete on equal terms.
+            c[col] = -(left ** -LMAX_FAIRNESS)
+            col += 1
+
+    floors = dict(exact)
+    for it in live:
+        floors[it] = max(floor, MIN_MAXIMISE_RATE)
+    dem = _demand_vector(m, floors)
+
+    res = linprog(c, A_ub=-A, b_ub=-dem, bounds=list(zip(lo, hi)),
+                  method="highs")
+    if not res.success:
+        return None
+
+    out = {}
+    col = n
+    for it in live:
+        got = max(floor, MIN_MAXIMISE_RATE)
+        for _left, _w in segs[it]:
+            got += float(res.x[col])
+            col += 1
+        out[it] = got
+    return out
+
+
 def _solve_levels_linked(m: Model, exact: dict, linked: list):
     """
     Unbiased ("linked") maximisation - leximin.
@@ -303,8 +520,24 @@ def _solve_levels_linked(m: Model, exact: dict, linked: list):
     lo, hi = _bounds(m, extra=1)
     bnds = list(zip(lo, hi))
     n = m.n_var
-    settled: dict = {}
 
+    # Everyone is guaranteed the level an equal split would have reached, then
+    # fairness decides who climbs above it. Without this second step a target
+    # with its own spare resource just sat at the common level, because lifting
+    # it did nothing for the worst-off target and leximin only cares about that.
+    floors = dict(exact)
+    for it in live:
+        floors.setdefault(it, MIN_MAXIMISE_RATE)
+    guaranteed = _equal_split_level(m, floors, live, bnds, block)
+    if guaranteed > 0.0:
+        ceilings = {it: _solo_ceiling(m, floors, it, bnds, block) for it in live}
+        shareout = (_headroom_levels if LMAX_MODE == "headroom" else _fair_levels)
+        got = shareout(m, exact, live, guaranteed, ceilings)
+        if got:
+            return got
+
+    # Fallback: the original leximin staircase.
+    settled: dict = {}
     remaining = list(live)
     guard = 0
     while remaining and guard <= len(live):
@@ -1063,7 +1296,8 @@ def _to_solver_result(m: Model, x, e, demand: dict):
 
 def calculate(targets, mode="least_power", depth="quick", world=None,
               blocked_recipes=(), blocked_machines=(), name=None,
-              resource_limits=None, least_resources="off", time_limit=None):
+              resource_limits=None, least_resources="off", time_limit=None,
+              allow_reduction=True):
     """
     Solve and return {meta, nodes, edges, layers, stats} ready for the UI.
 
@@ -1087,6 +1321,12 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
     # A negative order is not a smaller order, it is a request to consume the
     # item out of thin air, and the balance rows will happily oblige. Treat it
     # as nothing asked for.
+    unknown = [t.get("item") for t in targets
+               if t.get("item") and t["item"] not in m.item_ix
+               and t["item"] not in m.data["items"]]
+    if unknown:
+        raise ValueError("Unknown item: " + ", ".join(sorted(set(unknown))))
+
     exact = {t["item"]: float(t.get("amount") or 0)
              for t in targets if t.get("type") == "exact"
              and float(t.get("amount") or 0) > 0}
@@ -1128,7 +1368,12 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
     if not demand:
         raise ValueError("Add at least one target with an amount.")
 
-    x, e, integral = _optimise(m, demand, mode, depth, time_limit)
+    # A maximised target may give a little ground if that buys a better plan -
+    # often it is the last couple of per cent that forces an awkward recipe in.
+    x, e, integral, demand = _optimise_flexible(
+        m, demand, set(levels) if allow_reduction else set(),
+        mode, depth, time_limit)
+    x = _prune_noise(m, x, e, demand)
 
     # Each resource needs its own extractors, so round up per resource. Taking
     # ceil() of the combined fraction under-reports whenever more than one
@@ -1275,6 +1520,128 @@ def start_ultra_process(payload):
                        args=(payload, queue, cancel_ev), daemon=True)
     proc.start()
     return proc, queue, cancel_ev
+
+
+def _prune_noise(m: Model, x, e, demand: dict):
+    """
+    Drop recipes running at a count too small to be real.
+
+    Only where it is provably free: the plan still meets every demand and no
+    item is left short. Anything actually load-bearing, however small, stays.
+    """
+    tiny = [i for i, v in enumerate(x) if EPS < v < NOISE_MACHINE_COUNT]
+    if not tiny:
+        return x
+
+    def feasible(vec):
+        surplus = m.net @ vec
+        for k, it in enumerate(m.raw_items):
+            surplus[m.item_ix[it]] += e[k]
+        if (surplus < -STRICT_SURPLUS_TOL).any():
+            return False
+        # The slack has to scale with the demand. A flat 0.05/min tolerance is
+        # larger than a maximised target sitting on its 0.01/min floor, so the
+        # test read "surplus >= -0.04" and dropping the item's only producer
+        # looked free - which zeroed the target outright.
+        for it, want in demand.items():
+            if it not in m.item_ix:
+                continue
+            slack = min(STRICT_SURPLUS_TOL, 0.05 * want)
+            if surplus[m.item_ix[it]] < want - slack:
+                return False
+        return True
+
+    out = np.array(x, dtype=float)
+    for i in sorted(tiny, key=lambda k: x[k]):
+        trial = out.copy()
+        trial[i] = 0.0
+        if feasible(trial):
+            out = trial
+    return out
+
+
+def _plan_stats(m: Model, x, e, demand: dict, mode: str):
+    """Just enough of the stats to judge a plan by its mode's own measure."""
+    extractors = int(sum(math.ceil(m.raw_machines[k] * e[k] - EPS)
+                         for k in range(len(e)) if e[k] > EPS))
+    nice, groups = nice_fraction_stats(x)
+
+    # Leftovers have to be counted here, not left at zero: "easiest" is judged
+    # on them first, so a stub value made every plan look equally tidy and the
+    # comparison silently fell through to the tie-breaks.
+    surplus = (m.net @ x)
+    for k, it in enumerate(m.raw_items):
+        surplus[m.item_ix[it]] += e[k]
+    byproducts = 0
+    for i, it in enumerate(m.items):
+        want = demand.get(it, 0.0)
+        if it not in demand and surplus[i] > STRICT_SURPLUS_TOL:
+            byproducts += 1
+        elif it in demand and surplus[i] - want > STRICT_SURPLUS_TOL:
+            byproducts += 1
+
+    return {
+        "machines": int(sum(math.ceil(v - EPS) for v in x if v > EPS) + extractors),
+        "power_mw": float(np.dot(m.power, x) + np.dot(m.raw_power, e)),
+        "steps":    int(sum(1 for v in x if v > EPS)),
+        "nice_machines": nice,
+        "machine_groups": groups,
+        "byproducts": byproducts,
+        "raw": {},
+    }
+
+
+def _worth_the_cut(base, cand, mode):
+    """Is `cand` enough of an improvement to justify making less?"""
+    if mode == "easiest":
+        # Use the mode's own definition of better rather than a second opinion.
+        # Ranking undialable clocks above leftovers here - while _metric ranks
+        # them the other way - bought a plan with 15 leftovers to clear 12 bad
+        # clocks, which is not the trade "easiest" is supposed to make.
+        return _metric(cand, mode) < _metric(base, mode)
+    b, c = _metric(base, mode), _metric(cand, mode)
+    if not isinstance(b, (int, float)) or b <= 0:
+        return False
+    return (b - c) / b >= MAX_REDUCE_MIN_GAIN
+
+
+def _optimise_flexible(m: Model, demand: dict, flexible: set, mode: str,
+                       depth: str, time_limit):
+    """
+    Solve at the settled levels, then see whether easing the maximised targets
+    buys a better plan. Returns (x, e, integral, demand_used).
+    """
+    tries = 1 + (len(MAX_REDUCE_STEPS) if flexible and mode != "maximise" else 0)
+
+    # Share one budget across the attempts rather than spending a fresh one on
+    # each. With no explicit limit the attempts each fell back to the full
+    # absolute allowance, so a deep MAX chain went from 2s to 32s - four times
+    # what "Absolute" is supposed to cost.
+    budget = time_limit
+    if budget is None and depth == "absolute" and tries > 1:
+        budget = ABSOLUTE_TIME_LIMIT
+    slot = (budget / tries) if budget else None
+
+    x, e, integral = _optimise(m, demand, mode, depth, slot)
+    if not flexible or mode == "maximise":
+        return x, e, integral, demand
+
+    base = _plan_stats(m, x, e, demand, mode)
+    for cut in MAX_REDUCE_STEPS:
+        eased = dict(demand)
+        for it in flexible:
+            if it in eased:
+                eased[it] = max(MIN_MAXIMISE_RATE, eased[it] * (1.0 - cut))
+        try:
+            x2, e2, integral2 = _optimise(m, eased, mode, depth, slot)
+        except Exception:                          # noqa: BLE001
+            continue
+        cand = _plan_stats(m, x2, e2, eased, mode)
+        if _worth_the_cut(base, cand, mode):
+            # Keep the demand at the eased level so the reported output is what
+            # the plan actually makes, not what was originally settled.
+            return x2, e2, integral2, eased
+    return x, e, integral, demand
 
 
 def _metric(stats, mode):
@@ -1471,12 +1838,17 @@ def ultra_search(targets, mode="least_machines", world=None,
                 # not then start a fresh multi-second solve.
                 if cancelled is not None and cancelled():
                     return
+                # The sweep is comparing resource sets, so it skips the
+                # give-a-little pass - four solves per candidate would make it
+                # four times longer for a judgement the refinement redoes
+                # properly anyway.
                 result = calculate(targets, mode=mode, depth="absolute",
                                    world=world,
                                    blocked_recipes=blocked_recipes,
                                    blocked_machines=blocked_machines,
                                    resource_limits=limits, least_resources=lr,
-                                   name=name, time_limit=per_candidate)
+                                   name=name, time_limit=per_candidate,
+                                   allow_reduction=False)
         except ValueError:
             pass                                   # infeasible combination
         except Exception:                          # noqa: BLE001

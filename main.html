@@ -3590,9 +3590,9 @@
             } else if (maxed.length && (tab.calc.mode === 'least_machines' || tab.calc.mode === 'least_power')) {
                 const what = tab.calc.mode === 'least_machines' ? 'machines' : 'power';
                 warn.textContent = `Heads up: ${maxed.length} target${maxed.length === 1 ? '' : 's'} `
-                    + `on ${kinds}. Output is maximised first, so the ${what} figure follows from `
-                    + `that — it will not be as low as it would be for fixed amounts. `
-                    + `Least ${what} only chooses the cheapest way to reach that output.`;
+                    + `on ${kinds}. Output is settled first, then eased back by up to 10% `
+                    + `where that genuinely cuts ${what} — so the figure follows from the `
+                    + `output, and will not be as low as it would be for fixed amounts.`;
                 warn.style.display = '';
             } else {
                 warn.style.display = 'none';
