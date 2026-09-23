@@ -6,13 +6,15 @@ Serves main.html, the share-link solver, and the production calculator.
 """
 
 import os
-import queue
 import sys
 import json
 import time
 import hashlib
+import subprocess
 import tempfile
 import threading
+
+import job_store
 
 from flask import Flask, send_from_directory, request, jsonify
 
@@ -56,11 +58,8 @@ except Exception as e:                                    # noqa: BLE001
 app = Flask(__name__, static_folder=HERE)
 
 # ---------------------------------------------------------------------------
-# In-memory world store + on-disk result cache
+# Result cache. Parsed worlds live in job_store, which every worker can read.
 # ---------------------------------------------------------------------------
-
-_worlds = {}                       # world_id -> parsed world dict
-_worlds_lock = threading.Lock()
 
 CACHE_PATH = os.path.join(HERE, ".calc_cache.json")
 _cache_lock = threading.Lock()
@@ -100,9 +99,14 @@ def _cache_store(key: str, value: dict):
         if len(_calc_cache) > 400:
             for k in list(_calc_cache)[:100]:
                 _calc_cache.pop(k, None)
+        # Atomic: several workers share this file, and a plain truncate-then-
+        # write leaves a half-file behind if two land together - which then
+        # fails to parse on the next start and the whole cache is lost.
         try:
-            with open(CACHE_PATH, "w", encoding="utf-8") as f:
+            fd, tmp = tempfile.mkstemp(dir=HERE, suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(_calc_cache, f)
+            os.replace(tmp, CACHE_PATH)
         except Exception:                                 # noqa: BLE001
             pass
 
@@ -112,116 +116,57 @@ def _cache_store(key: str, value: dict):
 # and the browser can poll for progress.
 # ---------------------------------------------------------------------------
 
-_ultra_jobs = {}
-_ultra_lock = threading.Lock()
+_ULTRA_MAX_RUNNING = 3
+_STALE_AFTER = 90          # no heartbeat for this long => the child is gone
 
 
-def _ultra_prune():
-    """Drop finished jobs nobody has collected for a while."""
-    now = time.time()
-    for jid, job in list(_ultra_jobs.items()):
-        if job["state"] in ("done", "error", "cancelled") and now - job["ended"] > 900:
-            _ultra_jobs.pop(jid, None)
-
-
-def _run_ultra(job_id, body, world):
+def _spawn_runner(module, job_id):
     """
-    Drive a search running in its own process.
+    Start a runner as a plain subprocess.
 
-    This thread only moves messages off a queue, so it is idle almost all the
-    time and the web server keeps its interpreter to itself. Everything heavy -
-    model building, HiGHS, graph layout - happens in the child.
+    Not multiprocessing: under gunicorn `__main__` is the gunicorn console
+    script, and the spawn start method re-imports `__main__` in the child,
+    which would try to boot a second gunicorn. `-m` has no such fixup.
     """
-    job = _ultra_jobs[job_id]
+    log = open(os.path.join(job_store.job_dir(job_id), "stderr.log"), "wb")
+    kw = {}
+    if os.name == "nt":
+        kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    else:
+        # Its own session, so a worker reload or Ctrl-C does not take the
+        # search down with it.
+        kw["start_new_session"] = True
+    return subprocess.Popen(
+        [sys.executable, "-m", module, job_id],
+        cwd=HERE, stdin=subprocess.DEVNULL, stdout=log, stderr=log, **kw)
 
-    # Share the machine between concurrent searches rather than letting each one
-    # size its own pool against the full core count.
-    with _ultra_lock:
-        running = max(1, sum(1 for j in _ultra_jobs.values()
-                             if j["state"] == "running"))
-    workers = max(2, min(8, calculator.ULTRA_MAX_CONCURRENT_SOLVES // running))
 
-    payload = {
-        "targets":          body.get("targets") or [],
-        "mode":             body.get("mode", "least_machines"),
-        "world":            world,
-        "blocked_recipes":  body.get("blocked_recipes") or (),
-        "blocked_machines": body.get("blocked_machines") or (),
-        "resource_limits":  body.get("resource_limits") or None,
-        "least_resources":  body.get("least_resources") or "off",
-        "name":             body.get("name"),
-        "priority":         body.get("priority") or None,
-        "ban_depth":        body.get("ultra_depth"),   # NOT "depth"
-        "workers":          workers,
-    }
+def _job_view(job_id, running_states=("running",)):
+    """Read a job's status, deciding whether a quiet child has died."""
+    st = job_store.read_json(job_id, "status")
+    if st is None:
+        return None
+    if st.get("state") in running_states:
+        quiet = time.time() - float(st.get("alive") or st.get("started") or 0)
+        if quiet > _STALE_AFTER:
+            st["state"] = "error"
+            st.setdefault("error", "The search stopped unexpectedly.")
+    return st
 
-    proc = None
+
+def _running_ultras():
     try:
-        proc, q, cancel_ev = calculator.start_ultra_process(payload)
-        job["_proc"] = proc
-
-        while True:
-            if job["cancel"] and not cancel_ev.is_set():
-                cancel_ev.set()
-                job["_cancel_at"] = time.time()
-
-            try:
-                msg = q.get(timeout=0.4)
-            except queue.Empty:
-                if not proc.is_alive():
-                    break
-                # Cooperative cancel first, then insist. An in-flight solve
-                # cannot be interrupted from outside, and during refinement one
-                # can hold on for minutes.
-                if job["cancel"] and time.time() - job.get("_cancel_at", 0) > 3:
-                    proc.terminate()
-                    break
-                continue
-
-            kind = msg[0]
-            if kind == "progress":
-                _, checked, total, best_stats, stage = msg
-                job["checked"], job["total"] = checked, total
-                if stage is not None:
-                    job["stage"] = stage
-                if best_stats:
-                    job["best"] = {k: best_stats.get(k) for k in
-                                   ("power_mw", "machines", "steps", "byproducts",
-                                    "byproduct_total", "byproduct_fluid_total",
-                                    "nice_machines", "machine_groups", "outputs")}
-            elif kind == "best":
-                # Snapshot every leader so Keep can answer instantly. Mark it,
-                # or a kept plan comes back looking like a plain calculation.
-                live = msg[1]
-                meta = dict(live["meta"])
-                meta["ultra"] = True
-                meta["ultra_partial"] = True
-                live["meta"] = meta
-                job["live_result"] = live
-            elif kind == "done":
-                job["result"] = msg[1]
-                break
-            elif kind == "error":
-                job["error"] = msg[1]
-                break
-
-        if job["error"]:
-            job["state"] = "error"
-        elif job["cancel"]:
-            job["state"] = "cancelled"
-        elif job["result"] is None:
-            job["state"] = "error"
-            job["error"] = "No workable plan found."
-        else:
-            job["state"] = "done"
-    except Exception as e:                                # noqa: BLE001
-        job["state"] = "error"
-        job["error"] = str(e)
-    finally:
-        job["ended"] = time.time()
-        job.pop("_proc", None)
-        if proc is not None and proc.is_alive():
-            proc.terminate()
+        ids = os.listdir(job_store.JOBS_ROOT)
+    except OSError:
+        return 0
+    n = 0
+    for jid in ids:
+        if jid == "worlds" or not jid.isalnum():
+            continue
+        st = job_store.read_json(jid, "status")
+        if st and st.get("state") == "running" and st.get("kind") == "ultra":
+            n += 1
+    return n
 
 
 @app.route("/api/ultra", methods=["POST"])
@@ -232,70 +177,107 @@ def ultra_start():
     if not (body.get("targets") or []):
         return jsonify({"error": "Add at least one target item."}), 400
 
-    world = None
-    if body.get("world_id"):
-        with _worlds_lock:
-            world = _worlds.get(body["world_id"])
-        if world is None:
-            return jsonify({"error": "World not loaded. Re-import your save."}), 400
+    if body.get("world_id") and job_store.get_world(body["world_id"]) is None:
+        return jsonify({"error": "World not loaded. Re-import your save."}), 400
 
-    job_id = hashlib.sha1(f"{time.time()}{id(body)}".encode()).hexdigest()[:12]
-    with _ultra_lock:
-        _ultra_prune()
-        if sum(1 for j in _ultra_jobs.values() if j["state"] == "running") >= 3:
-            return jsonify({"error": "Too many deep searches already running. "
-                                     "Wait for one to finish or cancel it."}), 429
-        _ultra_jobs[job_id] = {"state": "running", "checked": 0, "total": 0,
-                               "best": None, "result": None, "error": None,
-                               "cancel": False, "started": time.time(),
-                               "ended": 0, "stage": "", "live_result": None}
-    threading.Thread(target=_run_ultra, args=(job_id, body, world),
-                     daemon=True).start()
+    job_store.prune()
+    if _running_ultras() >= _ULTRA_MAX_RUNNING:
+        return jsonify({"error": "Too many deep searches already running. "
+                                 "Wait for one to finish or cancel it."}), 429
+
+    # Share the machine between searches instead of each sizing its own pool
+    # against the whole box.
+    running = max(1, _running_ultras() + 1)
+    workers = max(2, min(8, calculator.ULTRA_MAX_CONCURRENT_SOLVES // running))
+
+    job_id = job_store.new_id()
+    try:
+        job_store.create(job_id)
+    except OSError as e:
+        # Deployed somewhere the app directory is not writable. Say so plainly -
+        # JOBS_DIR moves the store somewhere that is.
+        return jsonify({"error": f"Cannot write job state to "
+                                 f"{job_store.JOBS_ROOT}: {e}. "
+                                 f"Set JOBS_DIR to a writable directory."}), 500
+    job_store.write_json(job_id, "payload", {
+        "targets":          body.get("targets") or [],
+        "mode":             body.get("mode", "least_machines"),
+        "world_id":         body.get("world_id"),
+        "blocked_recipes":  body.get("blocked_recipes") or [],
+        "blocked_machines": body.get("blocked_machines") or [],
+        "resource_limits":  body.get("resource_limits") or None,
+        "least_resources":  body.get("least_resources") or "off",
+        "name":             body.get("name"),
+        "priority":         body.get("priority") or None,
+        "ultra_depth":      body.get("ultra_depth"),   # NOT "depth"
+        "workers":          workers,
+        "started":          time.time(),
+    })
+    # Written before the child starts: it takes a few seconds to import SciPy
+    # and parse the docs, and a poll in that window must not 404.
+    job_store.write_json(job_id, "status", {
+        "kind": "ultra", "state": "running", "checked": 0, "total": 0,
+        "stage": "Starting", "best": None, "error": None,
+        "started": time.time(), "alive": time.time()})
+
+    try:
+        _spawn_runner("ultra_runner", job_id)
+    except Exception as e:                                # noqa: BLE001
+        job_store.write_json(job_id, "status", {
+            "kind": "ultra", "state": "error", "checked": 0, "total": 0,
+            "stage": "", "best": None, "error": f"Could not start search: {e}",
+            "started": time.time(), "alive": time.time()})
+        return jsonify({"error": f"Could not start search: {e}"}), 500
+
     return jsonify({"job_id": job_id})
 
 
 @app.route("/api/ultra/<job_id>")
 def ultra_status(job_id):
-    job = _ultra_jobs.get(job_id)
-    if job is None:
+    st = _job_view(job_id)
+    if st is None:
         return jsonify({"error": "Unknown or expired search."}), 404
-    out = {"state": job["state"], "checked": job["checked"],
-           "total": job["total"], "best": job["best"],
-           "stage": job.get("stage", ""),
-           "elapsed": round(time.time() - job["started"], 1)}
-    if job["state"] in ("done", "cancelled") and job["result"]:
-        out["result"] = job["result"]
-    if job["error"]:
-        out["error"] = job["error"]
+    out = {"state": st.get("state"), "checked": st.get("checked", 0),
+           "total": st.get("total", 0), "best": st.get("best"),
+           "stage": st.get("stage", ""),
+           "elapsed": round(time.time() - float(st.get("started") or time.time()), 1)}
+    if st.get("state") in ("done", "cancelled"):
+        result = job_store.read_json(job_id, "result") \
+            or job_store.read_json(job_id, "live")
+        if result:
+            out["result"] = result
+    if st.get("error"):
+        out["error"] = st["error"]
     return jsonify(out)
 
 
 @app.route("/api/ultra/<job_id>/keep", methods=["POST"])
 def ultra_keep(job_id):
     """Stop the search and hand back the best plan found so far, immediately."""
-    job = _ultra_jobs.get(job_id)
-    if job is None:
+    st = _job_view(job_id)
+    if st is None:
         return jsonify({"error": "Unknown or expired search."}), 404
 
-    # Check BEFORE cancelling. Setting the flag first meant an early Keep killed
+    # Check BEFORE stopping. Setting the flag first meant an early Keep killed
     # the search and then reported "nothing found yet" - the job was dead but
     # the page carried on showing a running timer that could never finish.
-    result = job.get("result") or job.get("live_result")
+    result = job_store.read_json(job_id, "result") \
+        or job_store.read_json(job_id, "live")
     if result is None:
         return jsonify({"error": "Nothing found yet - give it a moment."}), 409
 
-    job["cancel"] = True
-    return jsonify({"state": "kept", "checked": job["checked"],
-                    "total": job["total"], "result": result})
+    job_store.request_stop(job_id)
+    return jsonify({"state": "kept", "checked": st.get("checked", 0),
+                    "total": st.get("total", 0), "result": result})
 
 
 @app.route("/api/ultra/<job_id>/cancel", methods=["POST"])
 def ultra_cancel(job_id):
-    job = _ultra_jobs.get(job_id)
-    if job is None:
+    if not job_store.exists(job_id):
         return jsonify({"error": "Unknown or expired search."}), 404
-    job["cancel"] = True
-    return jsonify({"state": job["state"], "cancelling": True})
+    job_store.request_stop(job_id)
+    st = job_store.read_json(job_id, "status") or {}
+    return jsonify({"state": st.get("state", "running"), "cancelling": True})
 
 
 def _serialisable_layers(chain):
@@ -402,77 +384,6 @@ def reference():
 # on a single request; doing it inline is what made imports look flaky.
 # ---------------------------------------------------------------------------
 
-_world_jobs = {}
-_world_jobs_lock = threading.Lock()
-
-
-def _world_prune():
-    now = time.time()
-    for jid, job in list(_world_jobs.items()):
-        if job["state"] in ("done", "error") and now - job["ended"] > 900:
-            _world_jobs.pop(jid, None)
-
-
-def _run_world(job_id, path, original, cleanup):
-    job = _world_jobs[job_id]
-
-    def progress(stage, frac):
-        job["stage"] = stage
-        job["percent"] = round(float(frac) * 100, 1)
-
-    try:
-        # Out of process: the decoder is pure Python and would otherwise hold the
-        # GIL for the whole parse, hanging every other request on the server.
-        from save_parser import start_parse_process
-        proc, queue = start_parse_process(path)
-        world = None
-        while True:
-            if not proc.is_alive() and queue.empty():
-                break
-            try:
-                kind, *payload = queue.get(timeout=0.5)
-            except Exception:                         # noqa: BLE001
-                continue
-            if kind == "progress":
-                progress(payload[0], payload[1])
-            elif kind == "done":
-                world = payload[0]
-                break
-            elif kind == "error":
-                raise RuntimeError(payload[0])
-        proc.join(timeout=5)
-        if world is None:
-            raise RuntimeError("The save decoder stopped unexpectedly.")
-
-        world_id = hashlib.sha1(
-            f"{original}{len(world['recipes'])}{time.time()}".encode()).hexdigest()[:12]
-        with _worlds_lock:
-            _worlds[world_id] = world
-        job["result"] = {
-            "world_id":   world_id,
-            "name":       os.path.splitext(original)[0] or "World",
-            "parser":     world["parser"],
-            "schematics": len(world["schematics"]),
-            "recipes":    world["recipes"],
-            "machines":   world["machines"],
-            "resources":  world["resources"],
-            "unknown":    world["unknown_schematics"],
-        }
-        job["state"] = "done"
-        job["percent"] = 100.0
-        job["stage"] = "Done"
-    except Exception as e:                                # noqa: BLE001
-        job["state"] = "error"
-        job["error"] = f"Could not read save: {e}"
-    finally:
-        job["ended"] = time.time()
-        if cleanup:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-
-
 @app.route("/api/world", methods=["POST"])
 def world_upload():
     """Accept a .sav upload and start decoding it in the background."""
@@ -495,29 +406,43 @@ def world_upload():
         if not os.path.exists(path):
             return jsonify({"error": f"Save file not found: {path}"}), 400
 
-    job_id = hashlib.sha1(f"{time.time()}{original}".encode()).hexdigest()[:12]
-    with _world_jobs_lock:
-        _world_prune()
-        _world_jobs[job_id] = {"state": "running", "percent": 0.0,
-                               "stage": "Starting", "result": None,
-                               "error": None, "started": time.time(), "ended": 0}
-    threading.Thread(target=_run_world, args=(job_id, path, original, cleanup),
-                     daemon=True).start()
+    job_store.prune()
+    job_id = job_store.new_id()
+    try:
+        job_store.create(job_id)
+    except OSError as e:
+        return jsonify({"error": f"Cannot write job state to "
+                                 f"{job_store.JOBS_ROOT}: {e}. "
+                                 f"Set JOBS_DIR to a writable directory."}), 500
+    job_store.write_json(job_id, "payload", {
+        "path": path, "original": original, "cleanup": cleanup,
+        "started": time.time()})
+    job_store.write_json(job_id, "status", {
+        "kind": "world", "state": "running", "percent": 0.0,
+        "stage": "Starting", "error": None,
+        "started": time.time(), "alive": time.time()})
+
+    try:
+        _spawn_runner("world_runner", job_id)
+    except Exception as e:                                # noqa: BLE001
+        return jsonify({"error": f"Could not start import: {e}"}), 500
+
     return jsonify({"job_id": job_id})
 
 
 @app.route("/api/world/<job_id>")
 def world_status(job_id):
-    job = _world_jobs.get(job_id)
-    if job is None:
+    st = _job_view(job_id)
+    if st is None:
         return jsonify({"error": "Unknown or expired import."}), 404
-    out = {"state": job["state"], "percent": job["percent"],
-           "stage": job["stage"],
-           "elapsed": round(time.time() - job["started"], 1)}
-    if job["result"]:
-        out["result"] = job["result"]
-    if job["error"]:
-        out["error"] = job["error"]
+    out = {"state": st.get("state"), "percent": st.get("percent", 0.0),
+           "stage": st.get("stage", ""),
+           "elapsed": round(time.time() - float(st.get("started") or time.time()), 1)}
+    result = job_store.read_json(job_id, "result")
+    if result:
+        out["result"] = result
+    if st.get("error"):
+        out["error"] = st["error"]
     return jsonify(out)
 
 
@@ -541,8 +466,7 @@ def calculate_route():
 
     world = None
     if world_id:
-        with _worlds_lock:
-            world = _worlds.get(world_id)
+        world = job_store.get_world(world_id)
         if world is None:
             return jsonify({"error": "World not loaded. Re-import your save."}), 400
 
