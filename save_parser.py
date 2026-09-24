@@ -28,7 +28,6 @@ import os
 import re
 import sys
 import zlib
-import struct
 
 from docs_parser import load_docs
 
@@ -218,22 +217,3 @@ if __name__ == "__main__":
 # every other request hangs until it finishes - which is what made imports look
 # broken. A separate process sidesteps the GIL entirely.
 
-def _parse_worker(path, queue):
-    """Child-process entry point: parse and post progress back over `queue`."""
-    try:
-        def prog(stage, frac):
-            queue.put(("progress", stage, float(frac)))
-        result = parse_save(path, progress=prog)
-        queue.put(("done", result))
-    except Exception as exc:                          # noqa: BLE001
-        queue.put(("error", f"{exc}"))
-
-
-def start_parse_process(path):
-    """Kick off an out-of-process parse. Returns (process, queue)."""
-    import multiprocessing as mp
-    ctx = mp.get_context("spawn")                     # Windows has no fork
-    queue = ctx.Queue()
-    proc = ctx.Process(target=_parse_worker, args=(path, queue), daemon=True)
-    proc.start()
-    return proc, queue

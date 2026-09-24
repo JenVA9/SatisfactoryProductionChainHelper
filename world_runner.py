@@ -6,7 +6,6 @@ Same reasoning as ultra_runner - the parsed world and the job's progress both
 have to be visible to every gunicorn worker, not just the one that took the
 upload, so the child writes them to the job store itself.
 """
-import hashlib
 import os
 import sys
 import threading
@@ -60,13 +59,10 @@ def main(job_id):
 
         world = parse_save(path, progress=progress)
 
-        world_id = hashlib.sha1(
-            f"{original}{len(world['recipes'])}{time.time()}".encode()
-        ).hexdigest()[:12]
-        job_store.put_world(world_id, world)
-
+        # Handed straight back to the browser and not kept here. The tab owns
+        # its world from now on, so there is nothing of the save left on the
+        # server once this job's files age out.
         job_store.write_json(job_id, "result", {
-            "world_id":   world_id,
             "name":       os.path.splitext(original)[0] or "World",
             "parser":     world["parser"],
             "schematics": len(world["schematics"]),

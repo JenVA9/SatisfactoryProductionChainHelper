@@ -1,0 +1,7 @@
+# Runtime dependencies. Installing gunicorn here too so a server deploy is one
+# command; it is unused when you run ProductionHost.py directly.
+flask>=3.0
+requests>=2.31
+numpy>=1.26
+scipy>=1.11
+gunicorn>=21.2

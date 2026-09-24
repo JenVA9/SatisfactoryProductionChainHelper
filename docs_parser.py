@@ -160,7 +160,17 @@ def _find_docs(hint: str = None) -> str:
     if hint and os.path.exists(hint):
         return hint
 
+    here = os.path.dirname(os.path.abspath(__file__))
     roots = [
+        # Shipped alongside the app. On a server there is no Steam install and
+        # no D: drive, so without this every worker downloads the ~20MB locale
+        # file from GitHub on boot - and the mirror tracks a slightly different
+        # game version (200 items / 569 schematics vs 205 / 574 locally).
+        os.path.join(here, "Docs"),
+        os.path.join(here, "data"),
+        "/opt/satisfactory/Docs",
+        os.path.expanduser("~/.steam/steam/steamapps/common/Satisfactory/CommunityResources/Docs"),
+        os.path.expanduser("~/.local/share/Steam/steamapps/common/Satisfactory/CommunityResources/Docs"),
         r"D:\SteamLibrary\steamapps\common\Satisfactory\CommunityResources\Docs",
         r"C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\CommunityResources\Docs",
         r"C:\Program Files\Steam\steamapps\common\Satisfactory\CommunityResources\Docs",
@@ -205,7 +215,6 @@ def load_docs(path: str = None) -> dict:
 
     Returns cached result on repeated calls.
     """
-    global _cache
     if _cache is not None:
         return _cache
     with _cache_lock:
@@ -225,12 +234,12 @@ def _load_docs_locked(path: str = None) -> dict:
             raw = json.load(f)
     except FileNotFoundError:
         # Fall back to online mirror
-        print(f"[docs_parser] Local file not found, fetching online mirror...")
+        print("[docs_parser] Local file not found, fetching online mirror...")
         import urllib.request
         req = urllib.request.Request(_ONLINE_URL, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = json.loads(r.read().decode("utf-16"))
-        print(f"[docs_parser] Online mirror loaded.")
+        print("[docs_parser] Online mirror loaded.")
 
     # Pass 0: which item classes are fluids/gases? Needed before recipes are
     # parsed, and group order in the JSON is not guaranteed.

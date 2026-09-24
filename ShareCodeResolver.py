@@ -28,7 +28,6 @@ Node dict keys:
 """
 
 import json
-import math
 import requests
 import urllib.request
 from urllib.parse import urlparse, parse_qs
@@ -133,6 +132,28 @@ def _solve(request: dict, game_version: str) -> dict:
 # Graph building
 # ---------------------------------------------------------------------------
 
+def resolve_machine(buildings: dict, cls: str) -> dict:
+    """
+    A machine's data, whichever prefix the caller has.
+
+    Share-link chains name machines `Desc_ConstructorMk1_C` while the buildings
+    table is keyed `Build_ConstructorMk1_C`, so a plain lookup missed every
+    machine in an imported chain and silently fell back to a default speed.
+    Harmless while every machine runs at 1.0, wrong the moment one does not.
+    """
+    if not cls:
+        return {}
+    hit = buildings.get(cls)
+    if hit is not None:
+        return hit
+    for a, b in (("Desc_", "Build_"), ("Build_", "Desc_")):
+        if cls.startswith(a):
+            hit = buildings.get(b + cls[len(a):])
+            if hit is not None:
+                return hit
+    return {}
+
+
 def _items_per_min(recipe: dict, machine: dict, clock: int, machine_count: float) -> dict:
     """
     Compute actual items/min for each ingredient and product given
@@ -206,7 +227,7 @@ def _build_graph(solver_result: dict, data: dict) -> tuple:
                 continue
 
             recipe  = data["recipes"].get(recipe_cls)
-            machine = data["buildings"].get(machine_cls, {})
+            machine = resolve_machine(data["buildings"], machine_cls)
 
             if recipe is None:
                 continue
@@ -614,7 +635,7 @@ def _print_chain(chain: dict):
 
                 # Where inputs come from
                 if nid in edges_to:
-                    print(f"          FROM:")
+                    print("          FROM:")
                     for e in edges_to[nid]:
                         src = nodes_by_id[e["from_id"]]
                         src_label = src.get("label","?")
@@ -622,7 +643,7 @@ def _print_chain(chain: dict):
 
                 # What this produces and where it goes
                 if nid in edges_from:
-                    print(f"          TO:")
+                    print("          TO:")
                     for e in edges_from[nid]:
                         dst = nodes_by_id[e["to_id"]]
                         dst_label = dst.get("label","?")
@@ -639,12 +660,12 @@ def _print_chain(chain: dict):
                 print(f"    [{nid:>3}] {kind_label:14s}  {node['label']}  {_fmt(node['amount'])}/min")
 
                 if nid in edges_from:
-                    print(f"          TO:")
+                    print("          TO:")
                     for e in edges_from[nid]:
                         dst = nodes_by_id[e["to_id"]]
                         print(f"            [{e['to_id']:>3}] {dst.get('label','?'):30s}  {_fmt(e['amount']):>10}/min")
                 if nid in edges_to:
-                    print(f"          FROM:")
+                    print("          FROM:")
                     for e in edges_to[nid]:
                         src = nodes_by_id[e["from_id"]]
                         print(f"            [{e['from_id']:>3}] {src.get('label','?'):30s}  {_fmt(e['amount']):>10}/min")

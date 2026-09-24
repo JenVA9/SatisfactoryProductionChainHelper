@@ -23,11 +23,9 @@ import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 JOBS_ROOT = os.environ.get("JOBS_DIR") or os.path.join(HERE, ".jobs")
-WORLDS_ROOT = os.path.join(JOBS_ROOT, "worlds")
 
 # How long a finished job's files stick around for.
 JOB_TTL = 15 * 60
-WORLD_TTL = 12 * 60 * 60
 
 
 def _ensure(path):
@@ -209,50 +207,89 @@ def stop_watcher(job_id: str, every: float = 0.25):
     return cancelled
 
 
-# --- worlds -----------------------------------------------------------------
-# A parsed save is read by whichever worker happens to serve the next calculate,
-# so it cannot live in the importing worker's memory either.
-
-_world_memo = {}
-
-
-def put_world(world_id: str, world: dict) -> None:
-    _ensure(WORLDS_ROOT)
-    fd, tmp = tempfile.mkstemp(dir=WORLDS_ROOT, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(world, f)
-        os.replace(tmp, os.path.join(WORLDS_ROOT, world_id + ".json"))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
-def get_world(world_id: str):
-    if not world_id or not world_id.isalnum():
-        return None
-    hit = _world_memo.get(world_id)
-    if hit is not None:
-        return hit
-    path = os.path.join(WORLDS_ROOT, world_id + ".json")
-    try:
-        with open(path, encoding="utf-8") as f:
-            world = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
-    if len(_world_memo) > 8:                 # per worker; the file is the truth
-        _world_memo.clear()
-    _world_memo[world_id] = world
-    return world
-
-
 # --- housekeeping -----------------------------------------------------------
 
+LIVE_GRACE = 120        # a job whose heartbeat is newer than this is alive
+
+# Set when a sweep could not remove something, so the condition is observable
+# instead of silently swallowed. Read it from /api/health.
+prune_failures = 0
+prune_last_error = None
+
+
+def _job_is_live(job_id: str) -> bool:
+    """
+    Would deleting this job's files orphan a running child?
+
+    Anything still marked running with a recent heartbeat is left alone. Its
+    pid lives in status.json, and that file is the only way anything can ever
+    stop it.
+    """
+    st = read_json(job_id, "status")
+    if not st:
+        return False
+    if st.get("state") not in ("running",):
+        return False
+    beat = float(st.get("alive") or st.get("started") or 0)
+    return (time.time() - beat) < LIVE_GRACE
+
+
+def _remove_tree(path: str) -> bool:
+    """
+    Delete a directory, working around a holder that lets go a moment later.
+
+    OneDrive (and any indexer) can keep a handle on a folder it has just
+    written, which makes rmtree fail outright even when the folder is empty.
+    Clearing the contents first and retrying the directory itself gets past it.
+    """
+    for attempt in range(4):
+        try:
+            for name in os.listdir(path):
+                try:
+                    os.unlink(os.path.join(path, name))
+                except IsADirectoryError:
+                    shutil.rmtree(os.path.join(path, name), ignore_errors=True)
+                except OSError:
+                    pass
+            os.rmdir(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError as exc:
+            if attempt == 3:
+                if os.name == "nt" and _nt_force_remove(path):
+                    return True
+                global prune_failures, prune_last_error
+                prune_failures += 1
+                prune_last_error = f"{type(exc).__name__}: {exc}"
+                return False
+            time.sleep(0.15 * (attempt + 1))
+    return False
+
+
+def _nt_force_remove(path: str) -> bool:
+    """
+    Last resort on Windows only.
+
+    OneDrive keeps a handle on a folder it has just synced, and `os.rmdir`
+    never gets past it - not on a retry, not minutes later. PowerShell's
+    Remove-Item clears the same folders immediately. Linux, where this actually
+    runs in production, never needs this.
+    """
+    try:
+        import subprocess
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             f"Remove-Item -LiteralPath '{path}' -Recurse -Force "
+             f"-ErrorAction SilentlyContinue"],
+            capture_output=True, timeout=20)
+        return not os.path.exists(path)
+    except Exception:                                     # noqa: BLE001
+        return False
+
+
 def prune() -> None:
-    """Drop finished jobs and stale worlds. Cheap enough to call on each start."""
+    """Drop finished jobs. Cheap enough to call on each start."""
     now = time.time()
     try:
         entries = os.listdir(JOBS_ROOT)
@@ -260,20 +297,13 @@ def prune() -> None:
         return
     for name in entries:
         path = os.path.join(JOBS_ROOT, name)
-        if name == "worlds" or not os.path.isdir(path):
+        if not os.path.isdir(path):
             continue
         try:
-            if now - os.path.getmtime(path) > JOB_TTL:
-                shutil.rmtree(path, ignore_errors=True)
+            if now - os.path.getmtime(path) <= JOB_TTL:
+                continue
         except OSError:
-            pass
-    try:
-        for name in os.listdir(WORLDS_ROOT):
-            path = os.path.join(WORLDS_ROOT, name)
-            try:
-                if now - os.path.getmtime(path) > WORLD_TTL:
-                    os.unlink(path)
-            except OSError:
-                pass
-    except OSError:
-        pass
+            continue
+        if not name.isalnum() or _job_is_live(name):
+            continue                     # its child may still need that pid
+        _remove_tree(path)

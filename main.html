@@ -604,32 +604,6 @@
                  background: #f0fff4;
              }
 
-             .machine-card.splitter-card {
-                 border-color: var(--splitter);
-                 box-shadow: 0 0 0 1px var(--splitter)40;
-                 background: #1a1200;
-             }
-
-             [data-theme="light"] .machine-card.splitter-card {
-                 background: #fffbeb;
-             }
-
-             .machine-card.fade-in {
-                 animation: fadeInCard var(--t-slow) forwards;
-             }
-
-             @keyframes fadeInCard {
-                 from {
-                     opacity: 0;
-                     transform: translateY(12px);
-                 }
-
-                 to {
-                     opacity: 1;
-                     transform: translateY(0);
-                 }
-             }
-
              /* Tick indicator */
              .card-tick {
                  position: absolute;
@@ -1112,7 +1086,6 @@
                  border-radius: 8px;
                  padding: 3px;
              }
-             .seg.seg-wrap { flex-wrap: wrap; }
              .seg-btn {
                  flex: 1 1 auto;
                  min-width: 0;
@@ -1173,6 +1146,11 @@
                  align-items: center;
                  gap: 8px;
                  justify-content: flex-end;
+                 /* Starting a search adds the Keep button, which widens this
+                    row. Right-aligned and unable to wrap, the leftmost button
+                    (Cancel) was pushed off the left edge of the panel. */
+                 flex-wrap: wrap;
+                 min-width: 0;
              }
              /* The report sits under the buttons and is free to wrap onto as
                 many lines as it needs; the panel footer grows upwards with it
@@ -1280,7 +1258,6 @@
                  font-size: 9px; padding: 1px 5px; border-radius: 4px;
                  background: var(--accent-button); color: #fff; flex-shrink: 0;
              }
-             .rcp.locked label { opacity: .45; }
 
              /* Full-chain view: everything on screen at once, with the
                 already-done work dimmed so progress still reads at a glance. */
@@ -1364,7 +1341,7 @@
              .btn-ultra:hover { filter: brightness(1.12); }
              .btn-ultra:disabled { opacity: .55; filter: none; }
              #calc-ultra-wrap { display: none; align-items: center; gap: 8px; }
-             #calc-ultra-wrap.on { display: flex; }
+             #calc-ultra-wrap.on { display: flex; flex-wrap: wrap; min-width: 0; }
              /* How many resources ULTRA may ban at once. Cost is exponential,
                 so the choice is colour-coded: safe, costly, punishing. */
              #calc-depth-pick { display: inline-flex; align-items: center; gap: 3px; }
@@ -1452,6 +1429,64 @@
              #calc-stats.visible { display: flex; }
              #calc-stats b { color: var(--text-primary); font-weight: 600; }
              #calc-stats .spacer { margin-left: auto; display: flex; gap: 8px; }
+
+             #line-warn {
+                 position: fixed;
+                 inset: 0;
+                 z-index: 120;
+                 display: flex;
+                 align-items: center;
+                 justify-content: center;
+             }
+             #line-warn.hidden { display: none; }
+             #line-warn-blur {
+                 position: absolute;
+                 inset: 0;
+                 background: var(--bg-overlay);
+                 backdrop-filter: blur(3px);
+             }
+             #line-warn-panel {
+                 position: relative;
+                 width: min(560px, calc(100vw - 32px));
+                 max-height: calc(100vh - 64px);
+                 overflow-y: auto;
+                 padding: 20px 22px;
+                 border-radius: 12px;
+                 background: var(--bg-raised);
+                 border: 1px solid var(--red);
+                 box-shadow: 0 0 40px var(--red-dim);
+             }
+             #line-warn-panel h3 {
+                 margin: 0 0 8px;
+                 font-size: 16px;
+                 color: var(--red);
+             }
+             #line-warn-panel p { margin: 0 0 10px; font-size: 13px; }
+             #line-warn-list {
+                 margin: 0 0 12px;
+                 padding-left: 18px;
+                 font-size: 12px;
+                 line-height: 1.6;
+                 color: var(--text-secondary);
+                 max-height: 34vh;
+                 overflow-y: auto;
+             }
+             #line-warn-list li { margin-bottom: 3px; }
+
+             /* A solidified tab is a record, not a workspace. */
+             .solid-badge {
+                 display: inline-flex;
+                 align-items: center;
+                 gap: 5px;
+                 padding: 2px 8px;
+                 border-radius: 999px;
+                 font-size: 11px;
+                 letter-spacing: .04em;
+                 text-transform: uppercase;
+                 color: var(--accent-icon);
+                 background: var(--accent-card);
+                 border: 1px solid var(--border-bright);
+             }
 
              #add-prompt {
                  position: fixed;
@@ -1598,16 +1633,6 @@
         Utility
         ========================================================================== */
 
-             .visually-hidden {
-                 position: absolute;
-                 width: 1px;
-                 height: 1px;
-                 overflow: hidden;
-                 clip: rect(0,0,0,0);
-                 white-space: nowrap;
-             }
-
-
              /* ==========================================================================
         Spinner (monospace frame animation)
         ========================================================================== */
@@ -1657,24 +1682,6 @@
                      content: '⠋';
                  }
              }
-
-             .spinner {
-                 display: inline-flex;
-                 align-items: center;
-                 gap: 8px;
-                 font-family: var(--font-mono);
-                 font-size: 13px;
-                 color: var(--accent-line);
-                 text-shadow: var(--glow-sm);
-             }
-
-                 .spinner::before {
-                     content: '⠋';
-                     display: inline-block;
-                     animation: spin-frames 0.8s steps(10, end) infinite;
-                     font-size: 16px;
-                     line-height: 1;
-                 }
 
              /* Used inside the btn */
              .btn-primary.loading {
@@ -2030,6 +2037,23 @@
         </div>
     </div>
 
+    <!-- Shown when an imported line no longer matches the current game data.
+         Deliberately a full stop-and-read, not a toast: the numbers are about
+         to look authoritative and they are not. -->
+    <div id="line-warn" class="hidden">
+        <div id="line-warn-blur"></div>
+        <div id="line-warn-panel">
+            <h3 id="line-warn-title">This line no longer matches the game</h3>
+            <p id="line-warn-lead"></p>
+            <ul id="line-warn-list"></ul>
+            <p class="calc-hint" id="line-warn-foot"></p>
+            <div class="prompt-actions">
+                <button class="btn btn-secondary" id="line-warn-cancel">Don't open it</button>
+                <button class="btn btn-primary" id="line-warn-open">Open it anyway</button>
+            </div>
+        </div>
+    </div>
+
     <div id="add-prompt">
         <div id="add-prompt-blur"></div>
         <div id="add-prompt-panel">
@@ -2060,11 +2084,15 @@
                 <p>Paste a calculator ID, or load a <code>.json</code> file exported
                    from this tool. This restores the targets, mode and limits &mdash;
                    then press Calculate.</p>
+                <p class="calc-hint" style="margin:0 0 8px">A
+                   <code>.line.json</code> file is a <b>solidified line</b>: it opens
+                   exactly as it was built, and is checked against your game data
+                   first.</p>
                 <input type="text" id="import-input" placeholder="Paste calculator ID&hellip;"
                        autocomplete="off" spellcheck="false">
                 <div class="prompt-actions" style="justify-content:flex-start;margin-top:8px">
                     <label class="btn btn-secondary calc-file">
-                        Load .json<input type="file" id="import-file" accept=".json,application/json" hidden>
+                        Load .json<input type="file" id="import-file" accept=".json,.line.json,application/json" hidden>
                     </label>
                     <span class="calc-hint" id="import-note" style="margin:0"></span>
                 </div>
@@ -2243,6 +2271,16 @@
                     share: t.share,
                     chain: t.chain,
                     calc: t.calc || null,
+                    // Without this a solidified line quietly became an ordinary
+                    // calculator tab on the next reload, which would undo the
+                    // one thing solidifying promises.
+                    solid: t.solid || null,
+                    // And without this a running search was abandoned by a
+                    // refresh rather than reconnected to.
+                    ultra: t.ultra && t.ultra.job
+                        ? { job: t.ultra.job, started: t.ultra.started || 0,
+                            last: t.ultra.last || null, keeping: false }
+                        : null,
                     ticked: [...t.ticked],
                     dismissed: [...t.dismissed],
                 })),
@@ -2278,9 +2316,15 @@
                             ? t.calc.mode : 'least_power';
                         t.calc.priority = [head, ...all.filter(m => m !== head)];
                     }
-                    if (t.calc && t.calc.worldId) {
-                        t.calc.worldId = null;
-                        t.calc.worldStale = true;
+                    // Tabs saved before the world moved into the tab only had
+                    // a server-side id, which is gone. If the recipe list came
+                    // with it the tab still works; if not, say it needs a
+                    // re-import rather than silently planning with everything.
+                    if (t.calc && t.calc.worldId !== undefined) {
+                        delete t.calc.worldId;
+                        if (!(t.calc.worldRecipes && t.calc.worldRecipes.length)) {
+                            t.calc.worldStale = true;
+                        }
                     }
                 });
                 state.activeTab = parsed.activeTab || null;
@@ -2394,6 +2438,35 @@
             saveState();
             renderSidebar();
             renderChain();
+            // Whatever the tab we just left had on screen - a running search,
+            // a half-typed error, a stale preview - belongs to that tab, not
+            // this one. Rebuild the live parts from the tab now in front.
+            resetTabScopedUi();
+        }
+
+        // Everything here is shared DOM that shows one tab's business. On a
+        // switch it has to be re-derived, or the old tab's state sits there
+        // looking like it belongs to the new one.
+        function resetTabScopedUi() {
+            setCalcError('');
+            stopPreview();
+            const tab = activeCalcTab();
+            if (tab) {
+                renderCalcAll(tab);
+            } else {
+                // A share tab has no calculator, so none of its controls should
+                // still be showing. The ULTRA row in particular stayed put,
+                // because only renderCalcAll decides whether it belongs.
+                document.getElementById('calc-ultra-wrap').classList.remove('on');
+                const note = document.getElementById('calc-ultra-note');
+                if (note) note.style.display = 'none';
+                const warn = document.getElementById('calc-mode-warn');
+                if (warn) warn.style.display = 'none';
+                setPreview(null);
+                wpShow(false);
+            }
+            syncUltraUi();
+            renderCalcStats();
         }
 
         function moveTab(id, dir) {
@@ -2406,13 +2479,24 @@
         }
 
         function deleteTab(id) {
+            // A search belongs to its tab, so deleting the tab has to stop it.
+            // Otherwise the job runs to completion on the server with nobody
+            // left to watch it or cancel it - a deep search can hold a core for
+            // half an hour for nothing.
+            const doomed = state.tabs.find(t => t.id === id);
+            const job = doomed && doomed.ultra && doomed.ultra.job;
+            if (job) {
+                fetch('/api/ultra/' + job + '/cancel', { method: 'POST' }).catch(() => {});
+            }
+            const wasActive = state.activeTab === id;
             state.tabs = state.tabs.filter(t => t.id !== id);
-            if (state.activeTab === id) {
+            if (wasActive) {
                 state.activeTab = state.tabs.length > 0 ? state.tabs[0].id : null;
             }
             saveState();
             renderSidebar();
             renderChain();
+            if (wasActive) resetTabScopedUi();
         }
 
         function startRename(id, el) {
@@ -2471,6 +2555,9 @@
                 saveState();
                 renderSidebar();
                 renderChain();
+                // A new tab must not inherit the previous tab's live UI - the
+                // ULTRA row in particular stayed on screen saying "Cancel".
+                resetTabScopedUi();
                 document.getElementById('add-prompt').classList.remove('open');
                 input.value = '';
             } catch (e) {
@@ -2583,10 +2670,6 @@
             return map;
         }
 
-        function edgesTo(chain, nodeId) {
-            return chain.edges.filter(e => e.to_id === nodeId);
-        }
-
         // Byproduct nodes hanging off a given recipe, with their rates.
         function byproductsFrom(chain, nodeId) {
             const byId = {};
@@ -2600,10 +2683,6 @@
                 }
             });
             return out;
-        }
-
-        function edgesFrom(chain, nodeId) {
-            return chain.edges.filter(e => e.from_id === nodeId);
         }
 
         // ---- Build a machine card ------------------------------------------------
@@ -3038,17 +3117,6 @@
             return canvas.querySelector(`.card-wrap[data-node-id="${nodeId}"]`);
         }
 
-        function svgPoint(el, side) {
-            // Returns {x, y} in canvasWrap coordinate space
-            const wrapRect = canvasWrap.getBoundingClientRect();
-            const elRect = el.getBoundingClientRect();
-            const x = side === 'right'
-                ? (elRect.right - wrapRect.left - _panX) / _scale
-                : (elRect.left - wrapRect.left - _panX) / _scale;
-            const y = (elRect.top + elRect.height / 2 - wrapRect.top - _panY) / _scale;
-            return { x, y };
-        }
-
         function drawLines() {
             const tab = getActiveTab();
             lineSvg.innerHTML = '';
@@ -3252,7 +3320,7 @@
                 targets: [],                 // [{item, type:'exact'|'maximize', amount}]
                 mode: 'least_power',
                 depth: 'quick',
-                worldId: null,
+
                 worldName: null,
                 worldRecipes: null,          // null = no world (everything allowed)
                 worldMachines: null,
@@ -3280,6 +3348,10 @@
         function openCalcPanel() {
             const tab = activeCalcTab();
             if (!tab) return;
+            if (tab.solid) {
+                toast('This line is solidified — make a new calculator tab to change anything');
+                return;
+            }
             loadReference().then(() => {
                 document.getElementById('calc-panel-title').textContent = tab.name || 'Calculator';
                 renderCalcAll(tab);
@@ -3616,7 +3688,8 @@
             const c = tab.calc;
             const el = document.getElementById('calc-world-state');
             const note = document.getElementById('calc-world-note');
-            if (c.worldId) {
+            const hasWorld = !!(c.worldRecipes && c.worldRecipes.length);
+            if (hasWorld) {
                 el.innerHTML = `<b style="color:var(--text-primary)">${escHtml(c.worldName || 'World')}</b> &mdash; `
                     + `${c.worldRecipes.length} recipes, ${c.worldMachines.length} machines unlocked. `
                     + `Water is unlimited; other resources use map-wide totals.`;
@@ -3625,11 +3698,20 @@
                     note.textContent = `${c.worldUnknown.length} schematic(s) not in the vanilla game data `
                         + `(likely from mods) were skipped.`;
                 }
+            } else if (c.worldStale) {
+                // Saved before the world moved into the tab: the old binding
+                // lived on the server and is gone. Say so, because otherwise
+                // this tab quietly plans with every recipe in the game.
+                el.innerHTML = '<b style="color:var(--text-primary)">Your save is no longer attached.</b> '
+                    + 'This tab was set up before worlds were stored with the tab, so its '
+                    + 'unlock list was lost. Right now it is planning with every recipe in '
+                    + 'the game &mdash; import the save again to restrict it.';
+                note.style.display = 'none';
             } else {
                 el.textContent = 'No world loaded — every recipe is available and resources are map-wide totals.';
                 note.style.display = 'none';
             }
-            document.getElementById('calc-restrict-hint').textContent = c.worldId
+            document.getElementById('calc-restrict-hint').textContent = hasWorld
                 ? 'With a world loaded you can only untick things — you cannot enable what you have not unlocked.'
                 : 'Untick anything you do not want used.';
         }
@@ -3701,11 +3783,30 @@
             };
             xhr.onerror = () => { wpShow(false); setCalcError('Upload failed.'); };
             xhr.onload = () => {
-                let d = {};
-                try { d = JSON.parse(xhr.responseText); } catch (err) { }
+                let d = {}, parsed = false;
+                try { d = JSON.parse(xhr.responseText); parsed = true; } catch (err) { }
                 if (xhr.status >= 400 || d.error) {
                     wpShow(false);
-                    setCalcError(d.error || 'Could not read save');
+                    if (d.error) {
+                        setCalcError(d.error);
+                    } else if (!parsed) {
+                        // Nothing JSON came back, so the app never saw the
+                        // request - something in front of it answered. A 413 is
+                        // almost always the reverse proxy's upload cap: nginx
+                        // defaults client_max_body_size to 1MB, and every real
+                        // save is bigger than that.
+                        const mb = (file.size / 1048576).toFixed(1);
+                        setCalcError(xhr.status === 413
+                            ? `Upload rejected: the server will not accept a `
+                              + `${mb} MB file (HTTP 413). Raise the upload limit `
+                              + `on the web server - for nginx that is `
+                              + `client_max_body_size.`
+                            : `Upload failed: the server returned HTTP `
+                              + `${xhr.status || '(no response)'} instead of JSON, `
+                              + `so the request never reached the app.`);
+                    } else {
+                        setCalcError(`Could not read save (HTTP ${xhr.status}).`);
+                    }
                     return;
                 }
                 wpSet(100, { instant: true });
@@ -3747,9 +3848,11 @@
                 wpText('Imported ' + d.result.name);
                 const r = d.result;
                 Object.assign(tab.calc, {
-                    worldId: r.world_id, worldName: r.name,
+                    worldName: r.name,
                     worldRecipes: r.recipes, worldMachines: r.machines,
                     worldResources: r.resources, worldUnknown: r.unknown,
+                    worldParser: r.parser, worldSchematics: r.schematics,
+                    worldStale: false,
                     blockedRecipes: [], blockedMachines: [], resources: {},
                 });
                 saveState(); renderCalcAll(tab);
@@ -3761,8 +3864,9 @@
         document.getElementById('calc-world-clear').addEventListener('click', () => {
             const tab = activeCalcTab(); if (!tab) return;
             Object.assign(tab.calc, {
-                worldId: null, worldName: null, worldRecipes: null,
-                worldMachines: null, worldResources: null, worldUnknown: null,
+                worldName: null, worldRecipes: null, worldMachines: null,
+                worldResources: null, worldUnknown: null,
+                worldParser: null, worldSchematics: null, worldStale: false,
                 blockedRecipes: [], blockedMachines: [], resources: {},
             });
             saveState(); renderCalcAll(tab);
@@ -3831,7 +3935,14 @@
                     : { item: t.item, type: t.type });
             return {
                 targets, mode: c.mode, depth: c.depth,
-                world_id: c.worldId,
+                // The world travels with the request. The server keeps no copy
+                // of your save, so there is nothing to expire and nothing of
+                // yours left sitting there.
+                world: (c.worldRecipes && c.worldRecipes.length)
+                    ? { recipes: c.worldRecipes,
+                        machines: c.worldMachines || [],
+                        resources: c.worldResources || {} }
+                    : null,
                 blocked_recipes: c.blockedRecipes,
                 blocked_machines: c.blockedMachines,
                 resource_limits: c.resources || {},
@@ -3990,12 +4101,46 @@
 
         // ---- ULTRA: background exhaustive search ---------------------------------
 
-        let ultraJob = null;
+        // Only the tab on screen is polled; the timers are the screen's, not the
+        // job's. Everything about the search itself hangs off the tab, so two
+        // tabs can be searching and neither can touch the other's.
         let ultraTimer = null;
-        let ultraKeeping = false;        // Keep in flight - hold the status line
         let ultraClock = null;
-        let ultraStarted = 0;
-        let ultraLast = null;      // latest status, redrawn by the local clock
+        let ultraPolling = null;     // tab id whose job these timers belong to
+
+        function ultraOf(tab) {
+            if (!tab) return null;
+            if (!tab.ultra) tab.ultra = { job: null, started: 0, last: null, keeping: false };
+            return tab.ultra;
+        }
+
+        function ultraStopTimers() {
+            clearTimeout(ultraTimer); ultraTimer = null;
+            clearInterval(ultraClock); ultraClock = null;
+            ultraPolling = null;
+        }
+
+        function ultraStartTimers(tab) {
+            ultraStopTimers();
+            ultraPolling = tab.id;
+            ultraClock = setInterval(ultraTick, 1000);
+            ultraTimer = setTimeout(ultraPoll, 900);
+        }
+
+        // Called whenever the visible tab changes. Anything the previous tab had
+        // on screen goes away, and the new tab's own state is drawn instead.
+        function syncUltraUi() {
+            ultraStopTimers();
+            const tab = activeCalcTab();
+            const u = ultraOf(tab);
+            if (!u || !u.job) {
+                ultraUi(false, null, 0);
+                return;
+            }
+            u.keeping = false;
+            ultraTick();
+            ultraStartTimers(tab);
+        }
 
         function ultraUi(running, text, pct) {
             const btn = document.getElementById('calc-ultra');
@@ -4018,9 +4163,11 @@
         // polls land irregularly, so reflecting a server timestamp made the
         // number jump instead of counting up once per second.
         function ultraTick() {
-            if (!ultraJob || !ultraLast || ultraKeeping) return;
-            const d = ultraLast;
-            const secs = Math.round((Date.now() - ultraStarted) / 1000);
+            const tab = activeCalcTab();
+            const u = ultraOf(tab);
+            if (!u || !u.job || !u.last || u.keeping) return;
+            const d = u.last;
+            const secs = Math.round((Date.now() - (u.started || Date.now())) / 1000);
             const pct = d.total ? (100 * d.checked / d.total) : 0;
             const best = d.best ? ' — best: ' + ultraBestText(d.best) : '';
             const stage = d.stage ? ' [' + d.stage + ']' : '';
@@ -4033,14 +4180,22 @@
         // makes it sound like a broken promise.
         function byproductText(b) {
             const n = b.byproducts || 0;
-            if (!n) return 'no leftovers';
+            // Traces are real surplus below the plumbing threshold - a few
+            // hundredths of several items. Mentioned separately so the numbers
+            // tie up instead of looking like they do not.
+            const tr = b.traces || 0;
+            const trace = tr
+                ? ` + ${tr} trace${tr === 1 ? '' : 's'}`
+                  + (b.trace_total ? ` (${fmtAmt(b.trace_total)}/min)` : '')
+                : '';
+            if (!n) return (tr ? 'no leftovers' + trace : 'no leftovers');
             const amt = b.byproduct_total;
             const fl = b.byproduct_fluid_total;
             let t = n + ' leftover' + (n === 1 ? '' : 's');
             if (amt !== undefined && amt !== null) t += ' (' + fmtAmt(amt) + '/min';
             if (fl) t += ', ' + fmtAmt(fl) + ' fluid';
             if (amt !== undefined && amt !== null) t += ')';
-            return t;
+            return t + trace;
         }
 
         // Report the figures that matter for whatever is being optimised -
@@ -4070,27 +4225,35 @@
         }
 
         async function ultraPoll() {
-            // Pin the job for this round trip. Checking the global again after
-            // the await is what matters: pressing Keep or Cancel mid-flight used
-            // to let this reply land afterwards and either overwrite the plan
-            // just kept or report "cancelled before it found anything" over it.
-            const id = ultraJob;
-            if (!id) return;
+            // Pin BOTH the tab and the job for this round trip. Re-checking
+            // after the await is what matters: Keep, Cancel or a tab switch
+            // mid-flight used to let this reply land afterwards and overwrite
+            // whatever was on screen by then.
+            const tab = activeCalcTab();
+            const u = ultraOf(tab);
+            if (!tab || !u || !u.job) return;
+            const tabId = tab.id, id = u.job;
             let d;
             try {
                 d = await (await fetch('/api/ultra/' + id)).json();
-            } catch (e) { return; }
-            if (ultraJob !== id) return;          // Keep/Cancel won the race
+            } catch (e) {
+                if (ultraPolling === tabId) ultraTimer = setTimeout(ultraPoll, 1500);
+                return;
+            }
+            const now = activeCalcTab();
+            if (!now || now.id !== tabId) return;        // switched tabs
+            if (ultraOf(now).job !== id) return;         // Keep/Cancel won
 
             if (d.state === 'running') {
-                ultraLast = d;
+                u.last = d;
                 ultraTick();
                 ultraTimer = setTimeout(ultraPoll, 1000);
                 return;
             }
 
-            ultraJob = null; ultraLast = null;
-            clearInterval(ultraClock); ultraClock = null;
+            u.job = null; u.last = null; u.keeping = false;
+            ultraStopTimers();
+            saveState();
             ultraUi(false, null, 0);
             if (d.error) { setCalcError(d.error); return; }
             if (!d.result) {
@@ -4098,15 +4261,27 @@
                     ? 'Cancelled before it found anything.' : 'No plan found.');
                 return;
             }
-            applyChain(d.result);
-            toast(d.state === 'cancelled'
-                ? `Stopped after ${d.checked} of ${d.total} — kept the best found`
-                : `Searched all ${d.total} combinations`);
+            applyChain(d.result, tabId);
+            if (d.note) {
+                // The search ended for a reason worth naming, but it still had
+                // a plan, so say what happened rather than just showing it.
+                setCalcError(d.note);
+                toast(`Stopped early after ${d.checked} of ${d.total} — kept the best found`);
+            } else {
+                toast(d.state === 'cancelled'
+                    ? `Stopped after ${d.checked} of ${d.total} — kept the best found`
+                    : `Searched all ${d.total} combinations`);
+            }
         }
 
         // Shared by Calculate and ULTRA so a result lands identically either way.
-        function applyChain(d) {
-            const tab = activeCalcTab(); if (!tab) return;
+        function applyChain(d, tabId) {
+            // Land on the tab that asked for this, not whichever one is on
+            // screen when the answer arrives.
+            const tab = tabId
+                ? (state.tabs.find(t => t.id === tabId) || null)
+                : activeCalcTab();
+            if (!tab) return;
             tab.chain = { meta: d.meta, nodes: d.nodes, edges: d.edges, layers: d.layers };
             tab.calc.stats = d.stats;
             tab.ticked = new Set();
@@ -4119,28 +4294,29 @@
         // not have to wait for the in-flight solves to run out their budget.
         document.getElementById('calc-keep').addEventListener('click', async () => {
             const keep = document.getElementById('calc-keep');
-            if (keep.disabled || ultraKeeping) return;       // already on it
-            if (!ultraJob) { toast('That search has already finished'); return; }
-            const id = ultraJob;
+            const tab = activeCalcTab();
+            const u = ultraOf(tab);
+            if (keep.disabled || !u || u.keeping) return;     // already on it
+            if (!u.job) { toast('That search has already finished'); return; }
+            const id = u.job, tabId = tab.id;
 
             // Acknowledge the click first, and make sure nothing can undo that.
             // ultraTick repaints the status line every second, so the old
             // message vanished almost at once; a slow reply then left no sign
             // the button had been pressed at all.
-            ultraKeeping = true;
-            clearTimeout(ultraTimer);
-            clearInterval(ultraClock); ultraClock = null;
+            u.keeping = true;
+            ultraStopTimers();
             keep.disabled = true;
             keep.textContent = 'Keeping…';
             setPreview({ info: 'Taking the best found so far…' });
 
             const resume = () => {
-                ultraKeeping = false;
+                u.keeping = false;
                 keep.disabled = false;
                 keep.textContent = 'Keep';
-                if (ultraJob) {                     // put the search back on air
-                    ultraClock = setInterval(ultraTick, 1000);
-                    ultraTimer = setTimeout(ultraPoll, 900);
+                const back = activeCalcTab();
+                if (u.job && back && back.id === tabId) {
+                    ultraStartTimers(back);         // put the search back on air
                 }
             };
 
@@ -4152,9 +4328,11 @@
                     resume();
                     return;
                 }
-                ultraJob = null; ultraLast = null; ultraKeeping = false;
-                ultraUi(false, null, 0);
-                applyChain(d.result);
+                u.job = null; u.last = null; u.keeping = false;
+                ultraStopTimers();
+                if (activeCalcTab() && activeCalcTab().id === tabId) ultraUi(false, null, 0);
+                saveState();
+                applyChain(d.result, tabId);
                 toast(`Kept the best of ${d.checked} combination${d.checked === 1 ? '' : 's'}`);
             } catch (e) {
                 setCalcError(e.message || 'Could not keep that result');
@@ -4165,11 +4343,12 @@
         document.getElementById('calc-ultra').addEventListener('click', async () => {
             const tab = activeCalcTab(); if (!tab) return;
 
-            if (ultraJob) {                                  // second press abandons
-                clearTimeout(ultraTimer);
-                clearInterval(ultraClock); ultraClock = null;
-                const id = ultraJob;
-                ultraJob = null; ultraLast = null; ultraKeeping = false;
+            const u = ultraOf(tab);
+            if (u.job) {                                     // second press abandons
+                ultraStopTimers();
+                const id = u.job;
+                u.job = null; u.last = null; u.keeping = false;
+                saveState();
                 ultraUi(false, null, 0);
                 try { await fetch('/api/ultra/' + id + '/cancel', { method: 'POST' }); }
                 catch (e) { }
@@ -4189,13 +4368,12 @@
                 });
                 const d = await res.json();
                 if (!res.ok) { setCalcError(d.error || 'Could not start'); return; }
-                ultraJob = d.job_id;
-                ultraStarted = Date.now();
-                ultraLast = { checked: 0, total: 0, best: null, stage: '' };
+                u.job = d.job_id;
+                u.started = Date.now();
+                u.last = { checked: 0, total: 0, best: null, stage: '' };
+                saveState();
                 ultraUi(true, 'Starting deep search…', 0);
-                clearInterval(ultraClock);
-                ultraClock = setInterval(ultraTick, 1000);
-                ultraTimer = setTimeout(ultraPoll, 900);
+                ultraStartTimers(tab);
             } catch (e) { setCalcError(e.message); }
         });
 
@@ -4215,6 +4393,46 @@
             const isCalc = tab.kind === 'calc';
             const s = isCalc ? (tab.calc && tab.calc.stats) : chainStats(tab.chain);
             if (!s) { el.classList.remove('visible'); return; }
+
+            if (tab.solid) {
+                // Not a calculator any more: say so, and say whether it still
+                // lines up with the game.
+                const drift = (tab.solid.drift || []).length;
+                el.innerHTML = '';
+                const badge = document.createElement('span');
+                badge.className = 'solid-badge';
+                badge.textContent = 'Solidified';
+                badge.title = 'Frozen line — it will not change with game updates';
+                el.appendChild(badge);
+
+                const bits = document.createElement('span');
+                bits.style.cssText = 'margin-left:10px;font-size:12px';
+                const st = s || {};
+                const parts = [`${tab.solid.recipes || 0} machines`];
+                if (st.power_mw) parts.push(`${fmtAmt(st.power_mw)} MW`);
+                if (st.steps) parts.push(`${st.steps} steps`);
+                if (tab.solid.at) parts.push('frozen ' + String(tab.solid.at).slice(0, 10));
+                bits.textContent = parts.join(' · ');
+                el.appendChild(bits);
+
+                if (drift) {
+                    const warn = document.createElement('span');
+                    warn.style.cssText = 'margin-left:10px;font-size:12px;color:var(--red)';
+                    warn.textContent = `does not match your game data (${drift} issue${drift === 1 ? '' : 's'})`;
+                    warn.title = (tab.solid.drift || []).join('\n');
+                    el.appendChild(warn);
+                }
+
+                const save = document.createElement('button');
+                save.className = 'btn btn-secondary';
+                save.style.cssText = 'margin-left:auto';
+                save.textContent = 'Save line';
+                save.addEventListener('click', () => downloadLineFile(tab));
+                el.appendChild(save);
+
+                el.classList.add('visible');
+                return;
+            }
 
             const modeLabel = isCalc ? ({
                 least_power: 'Least power', least_machines: 'Least machines',
@@ -4273,7 +4491,179 @@
 
         // ---- Export / share ------------------------------------------------------
 
+        // ---- Solidify: freeze a chain so it can never drift ---------------------
+
+        const LINE_FMT = 'satisfactory-line';
+        const LINE_VERSION = 1;
+
+        // Layers are stored as id lists. The chain in memory may hold whole node
+        // objects, and writing those out would double the file for no gain.
+        function lineLayerIds(layers) {
+            return (layers || []).map(layer =>
+                (layer || []).map(e => (e && typeof e === 'object') ? e.id : e));
+        }
+
+        function buildLineFile(tab) {
+            return {
+                fmt: LINE_FMT,
+                v: LINE_VERSION,
+                name: tab.name || 'Production line',
+                solidified: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+                source: tab.kind === 'calc' ? 'calc' : 'share',
+                chain: {
+                    meta:   tab.chain.meta || {},
+                    nodes:  tab.chain.nodes || [],
+                    edges:  tab.chain.edges || [],
+                    layers: lineLayerIds(tab.chain.layers),
+                },
+                stats: (tab.calc && tab.calc.stats) || tab.stats || {},
+            };
+        }
+
+        function solidifyTab(tab) {
+            if (!tab || !tab.chain || !tab.chain.nodes || !tab.chain.nodes.length) {
+                toast('Nothing to solidify yet — calculate a chain first');
+                return;
+            }
+            if (tab.solid) { toast('This line is already solidified'); return; }
+            const n = tab.chain.nodes.filter(x => x.kind === 'recipe').length;
+            if (!confirm(
+                `Solidify "${tab.name}"?\n\n`
+                + `This freezes the ${n} machines exactly as they are. The tab `
+                + `becomes a record rather than a calculator: no recalculating, `
+                + `no changing targets, no ULTRA.\n\n`
+                + `It cannot be undone — but you can always make a new calculator `
+                + `tab for the same thing.`)) return;
+
+            // Keep the settings that produced it for reference, but the chain is
+            // now the truth.
+            tab.solid = {
+                at: new Date().toISOString(),
+                recipes: n,
+                from: tab.kind === 'calc' ? 'calculator' : 'share link',
+            };
+            // Layers stay as id lists: renderChain resolves them against
+            // chain.nodes, so swapping in node objects would draw empty layers.
+            tab.chain.layers = lineLayerIds(tab.chain.layers);
+            saveState();
+            renderSidebar(); renderChain(); renderCalcStats();
+            closeCalcPanel();
+            toast('Solidified — export it to share the exact line');
+        }
+
+        function downloadLineFile(tab) {
+            const doc = buildLineFile(tab);
+            downloadBlob(new Blob([JSON.stringify(doc, null, 1)],
+                { type: 'application/json' }),
+                (tab.name || 'production-line') + '.line.json');
+            toast('Saved the exact line as JSON');
+        }
+
+        // ---- Importing a solidified line ---------------------------------------
+
+        function showLineWarning(res, doc, onOpen) {
+            const box = document.getElementById('line-warn');
+            const problems = (res.broken && res.broken.length) ? res.broken : (res.drift || []);
+            const fatal = !!(res.broken && res.broken.length);
+
+            document.getElementById('line-warn-title').textContent = fatal
+                ? 'This file could not be read'
+                : 'This line no longer matches the game';
+            document.getElementById('line-warn-lead').textContent = fatal
+                ? 'It does not look like a line saved by this tool, or it has been '
+                  + 'edited since.'
+                : `"${doc.name || 'This line'}" was built against an older version of `
+                  + `the game. The layout and the numbers in it are exactly what was `
+                  + `built at the time, but they no longer match your game data, so `
+                  + `building it as shown may not work.`;
+
+            const list = document.getElementById('line-warn-list');
+            list.innerHTML = '';
+            problems.slice(0, 40).forEach(t => {
+                const li = document.createElement('li');
+                li.textContent = t;
+                list.appendChild(li);
+            });
+            document.getElementById('line-warn-foot').textContent =
+                problems.length > 40 ? `…and ${problems.length - 40} more.` : '';
+
+            const open = document.getElementById('line-warn-open');
+            open.style.display = fatal ? 'none' : '';
+            box.classList.remove('hidden');
+
+            const close = () => {
+                box.classList.add('hidden');
+                open.onclick = null;
+                document.getElementById('line-warn-cancel').onclick = null;
+            };
+            open.onclick = () => { close(); onOpen(); };
+            document.getElementById('line-warn-cancel').onclick = close;
+        }
+
+        function openSolidLine(doc, verified) {
+            // Layers are id lists in the file and stay that way - renderChain
+            // looks each id up in chain.nodes itself.
+            const layers = (doc.chain.layers || []).map(layer =>
+                (layer || []).map(e => (e && typeof e === 'object') ? e.id : e));
+
+            const tab = {
+                id: genId(),
+                kind: 'calc',
+                name: doc.name || 'Production line',
+                share: null,
+                chain: {
+                    meta: doc.chain.meta || {},
+                    nodes: doc.chain.nodes || [],
+                    edges: doc.chain.edges || [],
+                    layers,
+                },
+                calc: Object.assign(defaultCalc(), { stats: doc.stats || {} }),
+                solid: {
+                    at: doc.solidified || null,
+                    recipes: (doc.chain.nodes || []).filter(n => n.kind === 'recipe').length,
+                    from: doc.source || 'import',
+                    drift: (verified && verified.drift) || [],
+                },
+                ticked: new Set(),
+                dismissed: new Set(),
+            };
+            state.tabs.push(tab);
+            state.activeTab = tab.id;
+            saveState();
+            renderSidebar(); renderChain();
+            resetTabScopedUi();
+            document.getElementById('add-prompt').classList.remove('open');
+            toast(verified && verified.ok
+                ? 'Line opened — verified against your game data'
+                : 'Line opened — it does not match your game data');
+        }
+
+        async function importSolidLine(doc) {
+            let res;
+            try {
+                res = await (await fetch('/api/line/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(doc),
+                })).json();
+            } catch (e) {
+                // Could not reach the check. Do not pretend it passed.
+                res = { ok: false, broken: [], drift: [
+                    'Could not reach the server to check this line against your '
+                    + 'game data, so it has not been verified.'] };
+            }
+            if (res.error) {
+                res = { ok: false, broken: [res.error], drift: [] };
+            }
+            if (res.ok) { openSolidLine(doc, res); return true; }
+            showLineWarning(res, doc, () => openSolidLine(doc, res));
+            return true;
+        }
+
         function exportTab(tab) {
+            // A solidified tab IS the line, so the file is the export. No id,
+            // because the point is that nothing gets recomputed.
+            if (tab.solid) { downloadLineFile(tab); return; }
             // An imported chain is already shareable - hand back its original link.
             if (tab.kind !== 'calc' && tab.share) {
                 copyText(tab.share, 'Share link copied');
@@ -4326,6 +4716,17 @@
                 b: c.blockedRecipes || [],
                 bm: c.blockedMachines || [],
                 r: c.resources || {},
+                // Without this an exported tab silently lost its save and the
+                // plan came back using recipes that world has not unlocked.
+                w: (c.worldRecipes && c.worldRecipes.length) ? {
+                    n:  c.worldName || 'World',
+                    rc: c.worldRecipes,
+                    mc: c.worldMachines || [],
+                    rs: c.worldResources || null,
+                    uk: c.worldUnknown || [],
+                    p:  c.worldParser || null,
+                    sc: c.worldSchematics || null,
+                } : null,
             };
         }
 
@@ -4347,6 +4748,18 @@
             calc.blockedRecipes = c.b || [];
             calc.blockedMachines = c.bm || [];      // v1 exports did not carry these
             calc.resources = c.r || {};
+
+            // Restore the world the plan was built against, if the export has
+            // one. Older exports do not, and those tabs simply have no world.
+            if (c.w && Array.isArray(c.w.rc) && c.w.rc.length) {
+                calc.worldName = c.w.n || 'World';
+                calc.worldRecipes = c.w.rc;
+                calc.worldMachines = c.w.mc || [];
+                calc.worldResources = c.w.rs || null;
+                calc.worldUnknown = c.w.uk || [];
+                calc.worldParser = c.w.p || null;
+                calc.worldSchematics = c.w.sc || null;
+            }
 
             // Keep the goal and the priority list consistent whichever the
             // export happened to carry. Assigning priority[0] unconditionally
@@ -4457,6 +4870,7 @@
             state.tabs.push(tab);
             state.activeTab = tab.id;
             saveState(); renderSidebar(); renderChain();
+            resetTabScopedUi();       // do not inherit the old tab's live UI
             document.getElementById('add-prompt').classList.remove('open');
             if (openPanel !== false) openCalcPanel();
             return tab;
@@ -4509,6 +4923,16 @@
         async function applyImport(text) {
             const err = document.getElementById('share-error');
             err.classList.remove('visible');
+
+            // A solidified line is a different kind of thing: it is already
+            // solved, so it must not go down the settings path.
+            let maybeLine = null;
+            try { maybeLine = JSON.parse(text); } catch (e) { }
+            if (maybeLine && maybeLine.fmt === 'satisfactory-line') {
+                try { await loadReference(); } catch (e) { }
+                return await importSolidLine(maybeLine);
+            }
+
             let parsed;
             try {
                 parsed = calcFromId(text);
@@ -4617,7 +5041,9 @@
             // Chains are cached in localStorage, so a tab solved before a data
             // fix keeps the old numbers forever. Re-fetch on demand, carrying
             // tick/dismiss progress across so nothing is lost.
-            if (tab.kind !== 'calc' && tab.share) {
+            // Refreshing re-solves against current data, which is the opposite
+            // of what a solidified line is for.
+            if (tab.kind !== 'calc' && tab.share && !tab.solid) {
                 const refresh = document.createElement('button');
                 refresh.className = 'btn btn-secondary';
                 refresh.textContent = 'Refresh';
@@ -4626,10 +5052,26 @@
                 bar.appendChild(refresh);
             }
 
+            // Solidify is offered on anything with a finished chain - a
+            // calculated one or an imported share link - because the whole
+            // point is that any of them can be frozen and handed on.
+            if (!tab.solid && tab.chain.nodes && tab.chain.nodes.length) {
+                const solid = document.createElement('button');
+                solid.className = 'btn btn-secondary';
+                solid.textContent = 'Solidify';
+                solid.title = 'Freeze this exact line so it can be shared without '
+                    + 'game updates changing it. Cannot be undone.';
+                solid.addEventListener('click', () => solidifyTab(tab));
+                bar.appendChild(solid);
+            }
+
             const copy = document.createElement('button');
             copy.className = 'btn btn-primary';
-            copy.textContent = (tab.kind === 'calc') ? 'Export' : 'Copy';
-            copy.title = (tab.kind === 'calc')
+            copy.textContent = tab.solid ? 'Save line'
+                : (tab.kind === 'calc') ? 'Export' : 'Copy';
+            copy.title = tab.solid
+                ? 'Download this exact line as a .line.json file to share'
+                : (tab.kind === 'calc')
                 ? 'Copy a shareable calculator ID (or download JSON if too long)'
                 : 'Copy the original satisfactorytools.com link';
             copy.addEventListener('click', () => exportTab(tab));
@@ -4796,6 +5238,32 @@
             applyDragMode();
         };
         renderChain();
+
+        // A search survives a page reload: the job lives on the server and its
+        // id is saved with the tab, so reconnect instead of abandoning it. That
+        // is also what stops a refresh leaving a runner with nobody watching it.
+        (function resumeUltraAfterReload() {
+            const tab = activeCalcTab();
+            const u = tab && tab.ultra;
+            if (!u || !u.job) return;
+            fetch('/api/ultra/' + u.job)
+                .then(r => r.json())
+                .then(d => {
+                    if (d && d.state === 'running') {
+                        if (!u.started) u.started = Date.now();
+                        u.last = d;
+                        syncUltraUi();
+                    } else {
+                        // Already finished (or expired) while the page was gone.
+                        const id = tab.id;
+                        u.job = null; u.last = null; u.keeping = false;
+                        saveState();
+                        if (d && d.result) applyChain(d.result, id);
+                        ultraUi(false, null, 0);
+                    }
+                })
+                .catch(() => { u.job = null; u.last = null; saveState(); });
+        })();
 
     </script>
 </body>

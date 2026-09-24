@@ -55,13 +55,24 @@ except Exception as e:                                    # noqa: BLE001
     SAVE_ERROR = str(e)
     print(f"[WARN] Save import unavailable: {e}")
 
+try:
+    import line_check
+    LINE_ERROR = None
+except Exception as e:                                    # noqa: BLE001
+    line_check = None
+    LINE_ERROR = str(e)
+    print(f"[WARN] Solidified-line checking unavailable: {e}")
+
 app = Flask(__name__, static_folder=HERE)
 
 # ---------------------------------------------------------------------------
-# Result cache. Parsed worlds live in job_store, which every worker can read.
+# Result cache. Parsed worlds are NOT kept here - they go back to the
+# browser and live in the tab, so nothing of a save stays on the server.
 # ---------------------------------------------------------------------------
 
 CACHE_PATH = os.path.join(HERE, ".calc_cache.json")
+# Each entry is a whole chain, so this is a size budget more than a count.
+CACHE_MAX_ENTRIES = 60
 _cache_lock = threading.Lock()
 
 
@@ -76,13 +87,53 @@ def _load_cache() -> dict:
 _calc_cache = _load_cache()
 
 
+def _clean_world(world):
+    """
+    Accept only the two lists the model uses, as plain strings.
+
+    The world arrives from the browser now, so it is input like any other -
+    take the recipe and machine names and nothing else.
+    """
+    if not isinstance(world, dict):
+        return None
+    recipes = [str(x) for x in (world.get("recipes") or []) if isinstance(x, str)]
+    machines = [str(x) for x in (world.get("machines") or []) if isinstance(x, str)]
+    if not recipes:
+        return None
+
+    # Resource caps come with the world: None means unlimited (water), a number
+    # is that world's map-wide total. build_model treats these as the base the
+    # user's own caps are then applied on top of.
+    caps = {}
+    for k, v in (world.get("resources") or {}).items():
+        if not isinstance(k, str):
+            continue
+        if v is None:
+            caps[k] = None
+        else:
+            try:
+                caps[k] = max(0.0, float(v))
+            except (TypeError, ValueError):
+                continue
+    return {"recipes": recipes, "machines": machines, "resources": caps}
+
+
+def _world_fingerprint(world):
+    """Identify a world by what it unlocks - the tab sends it with every call."""
+    if not isinstance(world, dict):
+        return None
+    return [sorted(world.get("recipes") or []),
+            sorted(world.get("machines") or []),
+            sorted((world.get("resources") or {}).items(), key=lambda kv: kv[0])]
+
+
 def _cache_key(payload: dict) -> str:
     """Stable key for a calculation request (world included by id)."""
     blob = json.dumps({
         "targets": payload.get("targets"),
         "mode":    payload.get("mode"),
         "depth":   payload.get("depth"),
-        "world":   payload.get("world_id"),
+        "world":   _world_fingerprint(payload.get("world")),
         "br":      sorted(payload.get("blocked_recipes") or []),
         "bm":      sorted(payload.get("blocked_machines") or []),
         "rl":      sorted((payload.get("resource_limits") or {}).items()),
@@ -95,9 +146,11 @@ def _cache_key(payload: dict) -> str:
 def _cache_store(key: str, value: dict):
     with _cache_lock:
         _calc_cache[key] = value
-        # Keep the file small; this is a convenience cache, not a database.
-        if len(_calc_cache) > 400:
-            for k in list(_calc_cache)[:100]:
+        # Keep the file small. It is rewritten in full on every store, and on
+        # a machine where the project sits in a synced folder each rewrite is
+        # also an upload - a 400-chain cache had grown to 4.9MB.
+        if len(_calc_cache) > CACHE_MAX_ENTRIES:
+            for k in list(_calc_cache)[:len(_calc_cache) - CACHE_MAX_ENTRIES + 20]:
                 _calc_cache.pop(k, None)
         # Atomic: several workers share this file, and a plain truncate-then-
         # write leaves a half-file behind if two land together - which then
@@ -169,11 +222,18 @@ def _running_ultras():
         return 0
     n = 0
     for jid in ids:
-        if jid == "worlds" or not jid.isalnum():
+        if not jid.isalnum():
             continue
         st = job_store.read_json(jid, "status")
-        if st and st.get("state") == "running" and st.get("kind") == "ultra":
-            n += 1
+        if not st or st.get("kind") != "ultra" or st.get("state") != "running":
+            continue
+        # A child that died without being asked to stop leaves its status
+        # saying "running" forever. Counting those would fill the three slots
+        # with ghosts and every new search would come back 429.
+        beat = float(st.get("alive") or st.get("started") or 0)
+        if time.time() - beat > job_store.LIVE_GRACE:
+            continue
+        n += 1
     return n
 
 
@@ -184,9 +244,6 @@ def ultra_start():
     body = request.get_json(silent=True) or {}
     if not (body.get("targets") or []):
         return jsonify({"error": "Add at least one target item."}), 400
-
-    if body.get("world_id") and job_store.get_world(body["world_id"]) is None:
-        return jsonify({"error": "World not loaded. Re-import your save."}), 400
 
     job_store.prune()
     if _running_ultras() >= _ULTRA_MAX_RUNNING:
@@ -210,7 +267,7 @@ def ultra_start():
     job_store.write_json(job_id, "payload", {
         "targets":          body.get("targets") or [],
         "mode":             body.get("mode", "least_machines"),
-        "world_id":         body.get("world_id"),
+        "world":            _clean_world(body.get("world")),
         "blocked_recipes":  body.get("blocked_recipes") or [],
         "blocked_machines": body.get("blocked_machines") or [],
         "resource_limits":  body.get("resource_limits") or None,
@@ -249,13 +306,24 @@ def ultra_status(job_id):
            "total": st.get("total", 0), "best": st.get("best"),
            "stage": st.get("stage", ""),
            "elapsed": round(time.time() - float(st.get("started") or time.time()), 1)}
-    if st.get("state") in ("done", "cancelled"):
-        result = job_store.read_json(job_id, "result") \
-            or job_store.read_json(job_id, "live")
+    result = None
+    if st.get("state") in ("done", "cancelled", "error"):
+        result = (job_store.read_json(job_id, "result")
+                  or job_store.read_json(job_id, "live"))
         if result:
             out["result"] = result
+
     if st.get("error"):
-        out["error"] = st["error"]
+        if result:
+            # The child died, but every new leader was snapshotted as it was
+            # found - so hand back the best it reached instead of throwing the
+            # whole search away.
+            out["state"] = "cancelled"
+            out["note"] = ("The search stopped early ("
+                           + str(st["error"]) + ") - this is the best plan it "
+                           "had found.")
+        else:
+            out["error"] = st["error"]
     return jsonify(out)
 
 
@@ -392,6 +460,59 @@ def reference():
 # on a single request; doing it inline is what made imports look flaky.
 # ---------------------------------------------------------------------------
 
+@app.route("/api/line/verify", methods=["POST"])
+def line_verify():
+    """
+    Does this solidified line still match the current game data?
+
+    Stateless: the line is posted, checked and forgotten. Nothing about it is
+    kept here, which is the point of solidifying to a file in the first place.
+    """
+    if line_check is None:
+        return jsonify({"error": f"Line checking unavailable: {LINE_ERROR}"}), 503
+    doc = request.get_json(silent=True)
+    if doc is None:
+        return jsonify({"error": "Send the line file as JSON."}), 400
+    try:
+        return jsonify(line_check.check(doc))
+    except Exception as e:                                # noqa: BLE001
+        return jsonify({"error": f"Could not check that line: {e}"}), 500
+
+
+@app.route("/api/health")
+def health():
+    """
+    Cheap status for a deployed instance.
+
+    `prune_failures` is the one worth watching: the job store deletes finished
+    jobs on each new one, and if that keeps failing the directory grows without
+    bound. It used to fail silently, so nothing ever said so.
+    """
+    running = 0
+    try:
+        for jid in os.listdir(job_store.JOBS_ROOT):
+            if not jid.isalnum():
+                continue
+            st = job_store.read_json(jid, "status")
+            if not st or st.get("state") != "running":
+                continue
+            beat = float(st.get("alive") or st.get("started") or 0)
+            if time.time() - beat <= job_store.LIVE_GRACE:
+                running += 1
+    except OSError:
+        pass
+    return jsonify({
+        "ok":              True,
+        "calculator":      calculator is not None,
+        "save_import":     parse_save is None and "unavailable" or "ready",
+        "jobs_dir":        job_store.JOBS_ROOT,
+        "jobs_running":    running,
+        "prune_failures":  job_store.prune_failures,
+        "prune_last_error": job_store.prune_last_error,
+        "cached_results":  len(_calc_cache),
+    })
+
+
 @app.route("/api/world", methods=["POST"])
 def world_upload():
     """Accept a .sav upload and start decoding it in the background."""
@@ -470,13 +591,8 @@ def calculate_route():
 
     mode = body.get("mode", "least_power")
     depth = body.get("depth", "quick")
-    world_id = body.get("world_id")
+    world = _clean_world(body.get("world"))
 
-    world = None
-    if world_id:
-        world = job_store.get_world(world_id)
-        if world is None:
-            return jsonify({"error": "World not loaded. Re-import your save."}), 400
 
     key = _cache_key(body)
     # Pressing Calculate should recompute from scratch rather than hand back

@@ -1395,10 +1395,19 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
         achieved[it] = max(0.0, min(want, got))
 
     byproducts = {}
+    traces = {}
     for i, it in enumerate(m.items):
         extra = surplus[i] - achieved.get(it, 0.0)
-        if extra > STRICT_SURPLUS_TOL and it not in demand:
+        if it in demand:
+            continue
+        if extra > STRICT_SURPLUS_TOL:
             byproducts[it] = round(float(extra), 3)
+        elif extra > 1e-4:
+            # Under the reporting threshold, but it is still real. A plan can
+            # carry a few hundredths each of half a dozen items, and leaving
+            # that completely unmentioned is why the numbers "did not quite
+            # tie" - so it is counted separately rather than hidden.
+            traces[it] = round(float(extra), 4)
 
     solver_result = _to_solver_result(m, x, e, achieved)
     nodes, edges = SCR._build_graph(solver_result, m.data)
@@ -1441,6 +1450,11 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
             "byproduct_fluids": int(sum(1 for it in byproducts
                                         if m.data["items"].get(it, {}).get("fluid"))),
             "byproduct_detail": byproducts,
+            # Separate from leftovers proper: too small to plumb, too real to
+            # pretend is not there.
+            "traces":           len(traces),
+            "trace_total":      round(float(sum(traces.values())), 4),
+            "trace_detail":     traces,
             "outputs":       {k: round(v, 4) for k, v in achieved.items()},
             "requested":     {k: round(v, 4) for k, v in demand.items()},
             "raw":           {m.raw_items[k]: round(float(v), 4)
@@ -1452,8 +1466,6 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
 # ---------------------------------------------------------------------------
 # ULTRA - exhaustive portfolio search
 # ---------------------------------------------------------------------------
-
-ULTRA_PER_CANDIDATE = 45          # seconds of solver time per combination tried
 
 # Ceiling on solver threads across EVERY ultra job at once.
 #
@@ -1489,37 +1501,6 @@ def _client_payload(res):
         "stats":  res["stats"],
         "cached": False,
     }
-
-
-def _ultra_worker(payload, queue, cancel_ev):
-    """
-    Child-process entry point. Streams the same three things the in-process
-    version reported, as messages instead of callbacks.
-    """
-    try:
-        def progress(checked, total, best_stats, stage=None):
-            queue.put(("progress", checked, total, best_stats, stage))
-
-        def on_best(result):
-            queue.put(("best", _client_payload(result)))
-
-        result = ultra_search(progress=progress, on_best=on_best,
-                              cancelled=cancel_ev.is_set, **payload)
-        queue.put(("done", _client_payload(result) if result else None))
-    except Exception as exc:                        # noqa: BLE001
-        queue.put(("error", f"{exc}"))
-
-
-def start_ultra_process(payload):
-    """Spawn a search. Returns (process, queue, cancel_event)."""
-    import multiprocessing as mp
-    ctx = mp.get_context("spawn")                   # Windows has no fork
-    queue = ctx.Queue()
-    cancel_ev = ctx.Event()
-    proc = ctx.Process(target=_ultra_worker,
-                       args=(payload, queue, cancel_ev), daemon=True)
-    proc.start()
-    return proc, queue, cancel_ev
 
 
 def _prune_noise(m: Model, x, e, demand: dict):
@@ -1588,11 +1569,28 @@ def _plan_stats(m: Model, x, e, demand: dict, mode: str):
         "machine_groups": groups,
         "byproducts": byproducts,
         "raw": {},
+        # Which recipes the plan actually uses. Giving up output is only worth
+        # it if it buys a DIFFERENT way of building the thing; the same recipes
+        # running slower is just a smaller factory, which the user can get by
+        # asking for less.
+        "recipe_set": frozenset(m.recipe_ids[i] for i, v in enumerate(x)
+                                if v > EPS),
     }
 
 
 def _worth_the_cut(base, cand, mode):
-    """Is `cand` enough of an improvement to justify making less?"""
+    """
+    Is `cand` enough of an improvement to justify making less?
+
+    First test: it has to use a different set of recipes. Trading output for
+    the same recipes at a lower clock is not a better plan, it is the same plan
+    scaled down - and anyone who wanted less would have asked for less. Only a
+    genuinely different route earns the reduction.
+    """
+    if base.get("recipe_set") is not None and cand.get("recipe_set") is not None:
+        if base["recipe_set"] == cand["recipe_set"]:
+            return False
+
     if mode == "easiest":
         # Use the mode's own definition of better rather than a second opinion.
         # Ranking undialable clocks above leftovers here - while _metric ranks
@@ -1659,20 +1657,37 @@ def _metric(stats, mode):
     return sum(stats["raw"].values())              # maximise: least input
 
 
-def _ultra_score(stats, mode, priority=None):
-    """
-    Lower is better. Output comes first for every mode: a plan that makes more
-    is never beaten by one that makes less, because the modes settle output
-    before their own objective anyway.
+# Two candidates whose output is within this of each other are treated as
+# making the same amount, and the user's priority order decides between them.
+# Without a band, total output outranked the chosen objective outright: a 1.7%
+# output gain beat nine extra steps on a "least steps" search.
+ULTRA_OUTPUT_BAND = 0.02
 
-    After that the chosen mode decides, and `priority` supplies the tie-breaks -
-    so when two plans make the same per minute, the next preference in the list
-    picks between them (e.g. same output and machines, take the one drawing
-    less power).
+
+def _ultra_output(stats):
+    return round(sum(stats["outputs"].values()), 4)
+
+
+def _ultra_score(stats, mode, priority=None, best_output=None):
     """
-    out = sum(stats["outputs"].values())
+    Lower is better.
+
+    `best_output` is the most any candidate has managed so far. Everything
+    within `ULTRA_OUTPUT_BAND` of it shares the same output rank, so the mode
+    and the priority list actually decide. A candidate that makes materially
+    less still loses on output first - banning a resource until a chain barely
+    produces anything is not a cheaper plan, it is a different question.
+    """
+    out = _ultra_output(stats)
     order = [mode] + [p for p in (priority or []) if p != mode]
-    return (-round(out, 4), tuple(_metric(stats, p) for p in order))
+    metrics = tuple(_metric(stats, p) for p in order)
+
+    if best_output and best_output > 0:
+        # 0 = in the band, 1+ = progressively further below it
+        shortfall = max(0.0, (best_output - out) / best_output)
+        band = 0 if shortfall <= ULTRA_OUTPUT_BAND else shortfall
+        return (band, metrics, -out)
+    return (0, metrics, -out)
 
 
 # Resources whose recipes fan out into huge numbers of near-equivalent routes.
@@ -1786,7 +1801,7 @@ def ultra_search(targets, mode="least_machines", world=None,
 
     lock = threading.Lock()
     state = {"best": None, "key": None, "checked": 0, "ranked": [],
-             "refined": 0, "best_seq": 0}
+             "refined": 0, "best_seq": 0, "best_out": 0.0}
 
     # Callbacks are delivered through here, never straight from a worker.
     #
@@ -1857,14 +1872,22 @@ def ultra_search(targets, mode="least_machines", world=None,
         with lock:
             state["checked"] += 1
             if result is not None:
-                key = _ultra_score(result["stats"], mode, priority)
+                out = _ultra_output(result["stats"])
+                if out > state["best_out"]:
+                    # The band moved, so the sitting leader's score is stale.
+                    state["best_out"] = out
+                    if state["best"] is not None:
+                        state["key"] = _ultra_score(state["best"]["stats"],
+                                                    mode, priority, out)
+                key = _ultra_score(result["stats"], mode, priority,
+                                   state["best_out"])
                 if state["best"] is None or key < state["key"]:
                     result["meta"]["ultra_from"] = {"least_resources": lr,
                                                     "banned": list(banned)}
                     state["best"], state["key"] = result, key
                     state["best_seq"] += 1
                     new_leader, leader_seq = result, state["best_seq"]
-                state["ranked"].append((key, combo))
+                state["ranked"].append((key, combo, out))
             done = state["checked"]
             best_seq = state["best_seq"]
             best_stats = state["best"]["stats"] if state["best"] else None
@@ -1887,8 +1910,22 @@ def ultra_search(targets, mode="least_machines", world=None,
     # Second pass: the sweep gives every candidate the same modest budget, so a
     # promising one can look mediocre purely because it ran out of time. Re-solve
     # the leaders with a far longer budget to settle the order properly.
-    leaders = sorted((r for r in state["ranked"] if r[1] is not None),
-                     key=lambda kv: kv[0])[:ULTRA_REFINE_COUNT]
+    # Re-score every candidate against the FINAL best output before picking who
+    # gets refined - a candidate judged early was compared against a band that
+    # has since moved.
+    final_out = state["best_out"]
+    ranked = []
+    for row in state["ranked"]:
+        key, combo = row[0], row[1]
+        cand_out = row[2] if len(row) > 2 else None
+        if combo is None:
+            continue
+        if cand_out is not None and final_out > 0:
+            shortfall = max(0.0, (final_out - cand_out) / final_out)
+            band = 0 if shortfall <= ULTRA_OUTPUT_BAND else shortfall
+            key = (band,) + tuple(key[1:])
+        ranked.append((key, combo))
+    leaders = sorted(ranked, key=lambda kv: kv[0])[:ULTRA_REFINE_COUNT]
     if leaders and not (cancelled is not None and cancelled()):
         if progress:
             progress(state["checked"], total,
@@ -1931,8 +1968,15 @@ def ultra_search(targets, mode="least_machines", world=None,
             except Exception:                      # noqa: BLE001
                 done_one()
                 return
-            key = _ultra_score(res["stats"], mode, priority)
             with lock:
+                out = _ultra_output(res["stats"])
+                if out > state["best_out"]:
+                    state["best_out"] = out
+                    if state["best"] is not None:
+                        state["key"] = _ultra_score(state["best"]["stats"],
+                                                    mode, priority, out)
+                key = _ultra_score(res["stats"], mode, priority,
+                                   state["best_out"])
                 if state["best"] is None or key < state["key"]:
                     res["meta"]["ultra_from"] = {"least_resources": lr,
                                                  "banned": list(banned),
@@ -1951,6 +1995,48 @@ def ultra_search(targets, mode="least_machines", world=None,
 
         with futures.ThreadPoolExecutor(max_workers=workers) as pool:
             list(pool.map(refine, leaders))
+
+    # ---- ULTRA must never lose to a plain Calculate -----------------------
+    # The user's own settings with nothing banned ARE one of the candidates,
+    # but the sweep only gives each candidate a slice of the time a normal
+    # Calculate gets, and skips the give-a-little pass. So solve that one
+    # combination properly and let it compete. This is a floor, not the fix -
+    # the fix is the output band above - but a deep chain can still time out
+    # mid-sweep, and coming back worse than the button next to it is never an
+    # acceptable answer.
+    # Both depths, because either can win: absolute usually does, but it works
+    # to a time limit and a deep chain that runs out of it can come back worse
+    # than the quick pass. ULTRA must not lose to whichever one the user would
+    # have pressed.
+    if not (cancelled is not None and cancelled()):
+        for base_depth in ("absolute", "quick"):
+            try:
+                baseline = calculate(
+                    targets, mode=mode, depth=base_depth, world=world,
+                    blocked_recipes=blocked_recipes,
+                    blocked_machines=blocked_machines,
+                    resource_limits=dict(base_limits),
+                    least_resources=least_resources, name=name,
+                    time_limit=(per_candidate * ULTRA_REFINE_FACTOR
+                                if base_depth == "absolute" else None))
+            except Exception:                      # noqa: BLE001
+                continue
+            if baseline is None:
+                continue
+            with lock:
+                out = _ultra_output(baseline["stats"])
+                if out > state["best_out"]:
+                    state["best_out"] = out
+                    if state["best"] is not None:
+                        state["key"] = _ultra_score(state["best"]["stats"],
+                                                    mode, priority, out)
+                key = _ultra_score(baseline["stats"], mode, priority,
+                                   state["best_out"])
+                if state["best"] is None or key < state["key"]:
+                    baseline["meta"]["ultra_from"] = {
+                        "least_resources": least_resources, "banned": [],
+                        "baseline": base_depth}
+                    state["best"], state["key"] = baseline, key
 
     best = state["best"]
     if best is not None:

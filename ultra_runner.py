@@ -11,7 +11,6 @@ Windows and Linux.
 The child writes its own progress into the job directory, so no web worker owns
 the job and any of them can report on it.
 """
-import json
 import os
 import sys
 import threading
@@ -62,7 +61,7 @@ def main(job_id):
     try:
         import calculator
 
-        world = job_store.get_world(payload.get("world_id") or "")
+        world = payload.get("world")        # sent by the tab, not stored here
 
         def progress(checked, total, best_stats, stage=None):
             status["checked"] = checked
