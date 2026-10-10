@@ -535,6 +535,11 @@ def world_upload():
         if not os.path.exists(path):
             return jsonify({"error": f"Save file not found: {path}"}), 400
 
+    return _start_world_job(path, original, cleanup)
+
+
+def _start_world_job(path, original, cleanup):
+    """Create the job and launch the decoder. Shared by both upload paths."""
     job_store.prune()
     job_id = job_store.new_id()
     try:
@@ -557,6 +562,125 @@ def world_upload():
         return jsonify({"error": f"Could not start import: {e}"}), 500
 
     return jsonify({"job_id": job_id})
+
+
+# ---------------------------------------------------------------------------
+# Chunked upload.
+#
+# A reverse proxy in front of the app can cap request bodies far below the size
+# of a save - nginx defaults client_max_body_size to 1MB, and a save is 3-50MB -
+# so a single POST never reaches the app at all. Sending the file in pieces
+# gets under any such cap without anyone touching the web server's config.
+#
+# Pieces are keyed by byte OFFSET rather than sequence number, so the browser
+# can shrink the piece size mid-upload if a proxy still refuses one, and a
+# retried piece simply overwrites itself. They live in the shared job store
+# because with several gunicorn workers consecutive pieces land on different
+# processes.
+# ---------------------------------------------------------------------------
+
+MAX_SAVE_BYTES = 256 * 1024 * 1024        # far above any real save
+MAX_CHUNK_BYTES = 2 * 1024 * 1024
+
+
+@app.route("/api/world/upload", methods=["POST"])
+def world_upload_start():
+    if parse_save is None:
+        return jsonify({"error": f"Save import unavailable: {SAVE_ERROR}"}), 503
+    body = request.get_json(silent=True) or {}
+    try:
+        size = int(body.get("size"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Say how big the file is."}), 400
+    if size <= 0:
+        return jsonify({"error": "That file is empty."}), 400
+    if size > MAX_SAVE_BYTES:
+        return jsonify({"error": f"That file is {size // 1048576} MB, which is "
+                                 f"larger than any save should be "
+                                 f"(limit {MAX_SAVE_BYTES // 1048576} MB)."}), 413
+
+    job_store.prune()
+    upload_id = job_store.new_id()
+    try:
+        job_store.create(upload_id)
+    except OSError as e:
+        return jsonify({"error": f"Cannot write to {job_store.JOBS_ROOT}: {e}. "
+                                 f"Set JOBS_DIR to a writable directory."}), 500
+    name = os.path.basename(str(body.get("name") or "world.sav")) or "world.sav"
+    job_store.write_json(upload_id, "upload", {"size": size, "name": name})
+    return jsonify({"upload_id": upload_id, "max_chunk": MAX_CHUNK_BYTES})
+
+
+@app.route("/api/world/upload/<upload_id>/<int:offset>", methods=["POST"])
+def world_upload_piece(upload_id, offset):
+    meta = job_store.read_json(upload_id, "upload")
+    if meta is None:
+        return jsonify({"error": "Unknown or expired upload - start again."}), 404
+    data = request.get_data(cache=False)
+    if not data:
+        return jsonify({"error": "Empty piece."}), 400
+    if len(data) > MAX_CHUNK_BYTES:
+        return jsonify({"error": "Piece too large."}), 413
+    if offset < 0 or offset + len(data) > meta["size"]:
+        return jsonify({"error": "That piece falls outside the file."}), 400
+    part = os.path.join(job_store.job_dir(upload_id), f"part_{offset:012d}")
+    tmp = part + ".tmp"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, part)                  # a retry just overwrites itself
+    except OSError as e:
+        return jsonify({"error": f"Could not store that piece: {e}"}), 500
+    return jsonify({"ok": True, "received": len(data)})
+
+
+@app.route("/api/world/upload/<upload_id>/finish", methods=["POST"])
+def world_upload_finish(upload_id):
+    if parse_save is None:
+        return jsonify({"error": f"Save import unavailable: {SAVE_ERROR}"}), 503
+    meta = job_store.read_json(upload_id, "upload")
+    if meta is None:
+        return jsonify({"error": "Unknown or expired upload - start again."}), 404
+
+    d = job_store.job_dir(upload_id)
+    try:
+        parts = sorted(n for n in os.listdir(d)
+                       if n.startswith("part_") and not n.endswith(".tmp"))
+    except OSError as e:
+        return jsonify({"error": f"Could not read the upload: {e}"}), 500
+
+    # Stitch them together, insisting each piece starts exactly where the last
+    # one ended. A gap or overlap means a piece was lost, and decoding a
+    # corrupted save would only fail confusingly later.
+    tmp = tempfile.NamedTemporaryFile(suffix=".sav", delete=False)
+    total = 0
+    try:
+        for n in parts:
+            if int(n[5:]) != total:
+                raise ValueError(f"a piece is missing at byte {total}")
+            with open(os.path.join(d, n), "rb") as f:
+                chunk = f.read()
+            tmp.write(chunk)
+            total += len(chunk)
+        tmp.close()
+        if total != meta["size"]:
+            raise ValueError(f"expected {meta['size']} bytes but received {total}")
+    except (ValueError, OSError) as e:
+        tmp.close()
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        # Do not leave a partial copy of someone's save sitting on the server
+        # until the periodic sweep - the browser starts the upload over anyway.
+        job_store._remove_tree(d)
+        return jsonify({"error": f"The upload was incomplete ({e}). Try again."}), 400
+
+    resp = _start_world_job(tmp.name, meta["name"], True)
+    # The pieces have served their purpose; do not leave a copy of the save
+    # lying around while the decoder runs.
+    job_store._remove_tree(d)
+    return resp
 
 
 @app.route("/api/world/<job_id>")

@@ -28,7 +28,12 @@ def main(job_id):
     payload = job_store.read_json(job_id, "payload") or {}
     cancelled = job_store.stop_watcher(job_id)
 
-    status = {"state": "running", "checked": 0, "total": 0, "stage": "Starting",
+    # `kind` has to survive: the server wrote it when it created the job, and
+    # this dict replaces that file wholesale. Without it the search stopped
+    # being counted as an ULTRA the moment the child first reported in, so the
+    # limit on concurrent searches was only enforced for the first second.
+    status = {"kind": "ultra", "state": "running", "checked": 0, "total": 0,
+              "stage": "Starting",
               "best": None, "error": None,
               "started": payload.get("started") or started,
               "pid": os.getpid()}
@@ -49,12 +54,21 @@ def main(job_id):
     done = threading.Event()
 
     def heartbeat():
+        misses = 0
         while not done.wait(5.0):
+            # If the job's record is gone, or three heartbeats in a row cannot
+            # be written, nothing can see this process or cancel it any more.
+            # Carrying on would only burn CPU for nobody, so leave.
+            if job_store.job_vanished(job_id):
+                os._exit(3)
             status["alive"] = time.time()
             try:
                 flush(force=True)
+                misses = 0
             except Exception:                             # noqa: BLE001
-                pass
+                misses += 1
+                if misses >= 3:
+                    os._exit(3)
 
     threading.Thread(target=heartbeat, daemon=True).start()
 

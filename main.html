@@ -3767,58 +3767,140 @@
             importWorldFile(tab, file);
         });
 
-        function importWorldFile(tab, file) {
+        // Send the save in pieces rather than one request. A reverse proxy in
+        // front of the app can cap request bodies far below the size of a save
+        // (nginx defaults to 1MB), and then the app never sees the upload at
+        // all. Pieces start comfortably under that default and shrink further
+        // if something still refuses one, so it works without anyone touching
+        // the web server's config.
+        const UPLOAD_PIECE = 512 * 1024;
+        const UPLOAD_PIECE_MIN = 32 * 1024;
+
+        async function readJson(resp) {
+            try { return await resp.json(); } catch (e) { return null; }
+        }
+
+        class UploadError extends Error { }
+
+        async function uploadSaveInPieces(file, onProgress) {
+            let resp, d;
+            try {
+                resp = await fetch('/api/world/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: file.name, size: file.size }),
+                });
+            } catch (e) {
+                throw new UploadError('Could not reach the server.');
+            }
+            d = await readJson(resp);
+            if (!resp.ok || !d || !d.upload_id) {
+                throw new UploadError((d && d.error) || (
+                    `The server returned HTTP ${resp.status} instead of JSON, so `
+                    + `the request never reached the app.`));
+            }
+            const id = d.upload_id;
+            let piece = Math.min(UPLOAD_PIECE, d.max_chunk || UPLOAD_PIECE);
+            let offset = 0, failures = 0, okRun = 0;
+            // The smallest piece size that has failed. Once a size is known to
+            // be refused it is never tried again, so a proxy with a tight cap
+            // costs a couple of rejected requests rather than one every few.
+            let knownBad = Infinity;
+
+            // A piece the proxy refuses does not always come back as a tidy 413.
+            // nginx answers an oversized body and closes the connection while
+            // the browser is still sending it, so fetch throws a network error
+            // and the response is never seen. Both are handled the same way:
+            // try a smaller piece. Only when we are already at the smallest
+            // size does a failure count as a genuine connection problem.
+            const shrink = () => {
+                knownBad = Math.min(knownBad, piece);
+                piece = Math.max(UPLOAD_PIECE_MIN, Math.floor(piece / 2));
+                okRun = 0;
+            };
+
+            while (offset < file.size) {
+                const end = Math.min(offset + piece, file.size);
+                let r;
+                try {
+                    r = await fetch(`/api/world/upload/${id}/${offset}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/octet-stream' },
+                        body: file.slice(offset, end),
+                    });
+                } catch (e) {
+                    if (piece > UPLOAD_PIECE_MIN) { shrink(); continue; }
+                    if (++failures > 4) throw new UploadError('The connection kept dropping during the upload.');
+                    await new Promise(res => setTimeout(res, 400 * failures));
+                    continue;
+                }
+                if (r.ok) {
+                    failures = 0;
+                    offset = end;
+                    onProgress(offset / file.size);
+                    // After a run of successes, try a bigger piece again - a
+                    // one-off blip should not leave the upload crawling - but
+                    // never back up to a size that has already been refused.
+                    if (++okRun >= 8 && piece * 2 < knownBad && piece < UPLOAD_PIECE) {
+                        piece = Math.min(UPLOAD_PIECE, piece * 2);
+                        okRun = 0;
+                    }
+                    continue;
+                }
+                if (r.status === 413 && piece > UPLOAD_PIECE_MIN) {
+                    shrink();
+                    continue;                          // same offset, smaller piece
+                }
+                const body = await readJson(r);
+                if (r.status === 413) {
+                    throw new UploadError(
+                        `The web server refuses even ${Math.round(piece / 1024)} KB `
+                        + `requests (HTTP 413), so nothing can be uploaded. Check its `
+                        + `upload limit (nginx: client_max_body_size).`);
+                }
+                if (r.status >= 500 || r.status === 408 || r.status === 429) {
+                    if (++failures > 4) throw new UploadError((body && body.error) || `Upload failed (HTTP ${r.status}).`);
+                    await new Promise(res => setTimeout(res, 400 * failures));
+                    continue;
+                }
+                throw new UploadError((body && body.error) || `Upload failed (HTTP ${r.status}).`);
+            }
+
+            let f;
+            try {
+                f = await fetch(`/api/world/upload/${id}/finish`, { method: 'POST' });
+            } catch (e) {
+                throw new UploadError('Could not reach the server to finish the upload.');
+            }
+            const fd = await readJson(f);
+            if (!f.ok || !fd || !fd.job_id) {
+                throw new UploadError((fd && fd.error) || `Could not finish the upload (HTTP ${f.status}).`);
+            }
+            return fd.job_id;
+        }
+
+        async function importWorldFile(tab, file) {
             wpShow(true, 'upload');
             wpSet(0, { instant: true });
             wpText('Uploading ' + file.name + '\u2026');
 
-            const fd = new FormData();
-            fd.append('save', file);
+            let jobId;
+            try {
+                jobId = await uploadSaveInPieces(file, frac => wpSet(100 * frac));
+            } catch (err) {
+                wpShow(false);
+                setCalcError(err.message || 'Upload failed.');
+                return;
+            }
 
-            // XHR, not fetch: fetch cannot report upload progress.
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', '/api/world');
-            xhr.upload.onprogress = ev => {
-                if (ev.lengthComputable) wpSet(100 * ev.loaded / ev.total);
-            };
-            xhr.onerror = () => { wpShow(false); setCalcError('Upload failed.'); };
-            xhr.onload = () => {
-                let d = {}, parsed = false;
-                try { d = JSON.parse(xhr.responseText); parsed = true; } catch (err) { }
-                if (xhr.status >= 400 || d.error) {
-                    wpShow(false);
-                    if (d.error) {
-                        setCalcError(d.error);
-                    } else if (!parsed) {
-                        // Nothing JSON came back, so the app never saw the
-                        // request - something in front of it answered. A 413 is
-                        // almost always the reverse proxy's upload cap: nginx
-                        // defaults client_max_body_size to 1MB, and every real
-                        // save is bigger than that.
-                        const mb = (file.size / 1048576).toFixed(1);
-                        setCalcError(xhr.status === 413
-                            ? `Upload rejected: the server will not accept a `
-                              + `${mb} MB file (HTTP 413). Raise the upload limit `
-                              + `on the web server - for nginx that is `
-                              + `client_max_body_size.`
-                            : `Upload failed: the server returned HTTP `
-                              + `${xhr.status || '(no response)'} instead of JSON, `
-                              + `so the request never reached the app.`);
-                    } else {
-                        setCalcError(`Could not read save (HTTP ${xhr.status}).`);
-                    }
-                    return;
-                }
-                wpSet(100, { instant: true });
-                // Phase two: the server is decoding. Fresh bar, different colour.
-                setTimeout(() => {
-                    wpShow(true, 'extract');
-                    wpSet(0, { instant: true });
-                    wpText('Reading the world\u2026');
-                    pollWorld(tab, d.job_id);
-                }, 250);
-            };
-            xhr.send(fd);
+            wpSet(100, { instant: true });
+            // Phase two: the server is decoding. Fresh bar, different colour.
+            setTimeout(() => {
+                wpShow(true, 'extract');
+                wpSet(0, { instant: true });
+                wpText('Reading the world\u2026');
+                pollWorld(tab, jobId);
+            }, 250);
         }
 
         async function pollWorld(tab, jobId) {

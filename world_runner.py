@@ -21,7 +21,8 @@ def main(job_id):
     original = payload.get("original") or "world.sav"
     cleanup = bool(payload.get("cleanup"))
 
-    status = {"state": "running", "percent": 0.0, "stage": "Starting",
+    status = {"kind": "world", "state": "running", "percent": 0.0,
+              "stage": "Starting",
               "error": None, "started": payload.get("started") or time.time(),
               "pid": os.getpid()}
     last = [0.0]
@@ -40,12 +41,21 @@ def main(job_id):
     done = threading.Event()
 
     def heartbeat():
+        misses = 0
         while not done.wait(5.0):
+            # If the job's record is gone, or three heartbeats in a row cannot
+            # be written, nothing can see this process or cancel it any more.
+            # Carrying on would only burn CPU for nobody, so leave.
+            if job_store.job_vanished(job_id):
+                os._exit(3)
             status["alive"] = time.time()
             try:
                 flush(force=True)
+                misses = 0
             except Exception:                             # noqa: BLE001
-                pass
+                misses += 1
+                if misses >= 3:
+                    os._exit(3)
 
     threading.Thread(target=heartbeat, daemon=True).start()
 

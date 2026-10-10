@@ -55,6 +55,31 @@ def exists(job_id: str) -> bool:
         return False
 
 
+def _replace(src: str, dst: str) -> None:
+    """
+    os.replace, retried for a moment if the destination is busy.
+
+    On Windows, replacing a file fails with PermissionError whenever another
+    process has it open - and the status poller opens status.json once a second.
+    Measured with a reader hammering the file, 89% of writes failed. Most of
+    those are progress ticks and the next one covers for them, but the one that
+    matters is the LAST: a runner whose final "done" write is lost exits leaving
+    the job marked running, and 90 seconds later the staleness check calls a
+    finished import an error. Linux replaces over an open file happily, so this
+    never fires in production - it exists so the same code is reliable locally.
+    """
+    delay = 0.005
+    for attempt in range(14):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == 13:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 1.7, 0.25)
+
+
 def write_json(job_id: str, name: str, obj) -> None:
     """Replace <job>/<name>.json atomically."""
     d = _ensure(job_dir(job_id))
@@ -62,7 +87,7 @@ def write_json(job_id: str, name: str, obj) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(obj, f)
-        os.replace(tmp, os.path.join(d, name + ".json"))
+        _replace(tmp, os.path.join(d, name + ".json"))
     except BaseException:
         try:
             os.unlink(tmp)
@@ -182,6 +207,22 @@ def enforce_stop(job_id: str, grace: float = STOP_GRACE) -> bool:
     except OSError:
         pass
     return True
+
+
+def job_vanished(job_id: str) -> bool:
+    """
+    Has this job's record been deleted while its child is still running?
+
+    The server writes payload.json before it starts the child and nothing ever
+    removes it during a run, so its absence means the job directory was wiped -
+    a manual clean-up, a mistaken prune, a changed JOBS_DIR. A child in that
+    state can never be seen or cancelled again, because both the cancel flag
+    and the status it would report through live in the directory that is gone.
+    """
+    try:
+        return not os.path.exists(os.path.join(job_dir(job_id), "payload.json"))
+    except ValueError:
+        return True
 
 
 def stop_requested(job_id: str) -> bool:
