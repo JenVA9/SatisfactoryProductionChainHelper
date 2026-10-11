@@ -1254,6 +1254,20 @@
              .rcp:hover { background: var(--bg-base); }
              .rcp input { accent-color: var(--accent-button); flex-shrink: 0; }
              .rcp label { flex: 1; min-width: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+             .rcp.locked label { opacity: .45; }
+             .rcp.locked input { cursor: not-allowed; }
+             #calc-machine-list { margin-top: 6px; }
+             .rcp .need-badge {
+                 font-size: 9.5px; padding: 1px 6px; border-radius: 4px;
+                 border: 1px solid var(--border-bright); color: var(--text-secondary);
+                 flex-shrink: 0; white-space: nowrap;
+             }
+             .rcp .need-badge.locked { color: var(--red); border-color: var(--red); }
+             .rcp .mach-meta {
+                 font-size: 10.5px; color: var(--text-secondary);
+                 flex-shrink: 0; white-space: nowrap;
+             }
+             .rcp.locked .mach-meta { color: var(--red); opacity: 1; }
              .rcp .alt-badge {
                  font-size: 9px; padding: 1px 5px; border-radius: 4px;
                  background: var(--accent-button); color: #fff; flex-shrink: 0;
@@ -1998,9 +2012,16 @@
                 <div id="calc-resource-list"></div>
             </section>
 
+            <!-- Machines -->
+            <section class="calc-sec">
+                <h4>Machines</h4>
+                <p class="calc-hint" id="calc-machine-note">Untick a machine to keep everything made in it out of the plan.</p>
+                <div id="calc-machine-list"></div>
+            </section>
+
             <!-- Restrictions -->
             <section class="calc-sec">
-                <h4>Recipes &amp; machines</h4>
+                <h4>Recipes</h4>
                 <p class="calc-hint" id="calc-restrict-hint">Untick anything you do not want used.</p>
                 <div class="calc-row">
                     <input type="text" id="calc-recipe-search" placeholder="Filter recipes&hellip;" autocomplete="off">
@@ -2589,6 +2610,13 @@
         // show stats for imported chains and runs during init, and `typeof` on a
         // let in its temporal dead zone throws rather than returning undefined.
         let REF = null;
+
+        // Which method read this world's machines. 1 inferred them from the
+        // recipes you own, which wrongly counts a machine as unlocked whenever
+        // you hold an alternate recipe made in it; 2 reads the machine's own
+        // build-recipe unlock. Worlds stored by version 1 are flagged so the
+        // user knows to re-import rather than trusting the old list.
+        const WORLD_DETECT = 2;
         let refPromise = null;
 
         function iconUrl(cls) {
@@ -3376,6 +3404,7 @@
             renderModeDepth(tab);
             renderWorldState(tab);
             renderResourceList(tab);
+            renderMachineList(tab);
             renderRecipeList(tab);
         }
 
@@ -3693,11 +3722,24 @@
                 el.innerHTML = `<b style="color:var(--text-primary)">${escHtml(c.worldName || 'World')}</b> &mdash; `
                     + `${c.worldRecipes.length} recipes, ${c.worldMachines.length} machines unlocked. `
                     + `Water is unlimited; other resources use map-wide totals.`;
-                note.style.display = c.worldUnknown && c.worldUnknown.length ? '' : 'none';
+                const notes = [];
                 if (c.worldUnknown && c.worldUnknown.length) {
-                    note.textContent = `${c.worldUnknown.length} schematic(s) not in the vanilla game data `
-                        + `(likely from mods) were skipped.`;
+                    notes.push(`${c.worldUnknown.length} schematic(s) not in the vanilla game data `
+                        + `(likely from mods) were skipped.`);
                 }
+                if (c.worldParser === 'fallback') {
+                    notes.push('This save is in a newer format that only the basic reader could '
+                        + 'open, which can list a few schematics you have not actually bought. '
+                        + 'If a machine or recipe shows as unlocked that is not, switch it off below.');
+                }
+                if (c.worldDetect !== WORLD_DETECT) {
+                    notes.push('This save was read by an older, less accurate check, so the '
+                        + 'machine list may include machines you have not actually unlocked '
+                        + '(it counted a machine as yours whenever you owned an alternate '
+                        + 'recipe made in it). Import the save again to correct it.');
+                }
+                note.textContent = notes.join(' ');
+                note.style.display = notes.length ? '' : 'none';
             } else if (c.worldStale) {
                 // Saved before the world moved into the tab: the old binding
                 // lived on the server and is gone. Say so, because otherwise
@@ -3934,7 +3976,7 @@
                     worldRecipes: r.recipes, worldMachines: r.machines,
                     worldResources: r.resources, worldUnknown: r.unknown,
                     worldParser: r.parser, worldSchematics: r.schematics,
-                    worldStale: false,
+                    worldStale: false, worldDetect: WORLD_DETECT,
                     blockedRecipes: [], blockedMachines: [], resources: {},
                 });
                 saveState(); renderCalcAll(tab);
@@ -3949,12 +3991,117 @@
                 worldName: null, worldRecipes: null, worldMachines: null,
                 worldResources: null, worldUnknown: null,
                 worldParser: null, worldSchematics: null, worldStale: false,
+                worldDetect: null,
                 blockedRecipes: [], blockedMachines: [], resources: {},
             });
             saveState(); renderCalcAll(tab);
         });
 
         // ---- Recipe restrictions -------------------------------------------------
+
+        // A recipe is usable if at least one machine it can run in is both
+        // unlocked (when a world is loaded) and not switched off. This mirrors
+        // build_model exactly - same "first available machine" rule - so what the
+        // list shows is what the solver will actually do.
+        function recipeMachineState(tab, r) {
+            const c = tab.calc;
+            const ms = (r.machines && r.machines.length) ? r.machines : (r.machine ? [r.machine] : []);
+            const blocked = new Set(c.blockedMachines || []);
+            const world = c.worldMachines ? new Set(c.worldMachines) : null;
+            let offOnly = false;
+            for (const m of ms) {
+                const unlocked = !world || world.has(m);
+                if (unlocked && !blocked.has(m)) return { ok: true };
+                if (unlocked && blocked.has(m)) offOnly = true;
+            }
+            return { ok: false, off: offOnly, need: ms[0] || null };
+        }
+
+        function machineName(id) {
+            const m = REF && REF.machines.find(x => x.id === id);
+            return m ? m.name : String(id || '').replace(/^Build_|_C$/g, '');
+        }
+
+        function renderMachineList(tab) {
+            const host = document.getElementById('calc-machine-list');
+            const note = document.getElementById('calc-machine-note');
+            if (!host || !REF) return;
+            const c = tab.calc;
+            const world = c.worldMachines ? new Set(c.worldMachines) : null;
+            const owned = c.worldRecipes ? new Set(c.worldRecipes) : null;
+            const blocked = new Set(c.blockedMachines || []);
+
+            // Production machines only: miners and pumps are not something a
+            // recipe runs in.
+            const runsIn = {};
+            REF.recipes.forEach(r => {
+                const ms = (r.machines && r.machines.length) ? r.machines : (r.machine ? [r.machine] : []);
+                ms.forEach(m => {
+                    const e = runsIn[m] || (runsIn[m] = { all: 0, owned: 0 });
+                    e.all++;
+                    if (!owned || owned.has(r.id)) e.owned++;
+                });
+            });
+            const list = REF.machines
+                .filter(m => !m.extractor && runsIn[m.id])
+                .map(m => ({ ...m, locked: !!world && !world.has(m.id), n: runsIn[m.id] }))
+                // usable first, then the ones you have not unlocked
+                .sort((a, b) => (a.locked - b.locked) || a.name.localeCompare(b.name));
+
+            host.innerHTML = '';
+            list.forEach(m => {
+                const row = document.createElement('div');
+                row.className = 'rcp' + (m.locked ? ' locked' : '');
+                const id = 'mch_' + m.id;
+                const off = blocked.has(m.id);
+                let meta;
+                // Kept short: the panel is narrow and a long explanation cuts the
+                // machine's own name off. The full sentence is in the tooltip.
+                if (m.locked) {
+                    meta = m.n.owned ? `locked · ${m.n.owned} recipes` : 'locked';
+                } else {
+                    meta = `${m.n.owned} recipe${m.n.owned === 1 ? '' : 's'}`;
+                }
+                row.title = m.locked
+                    ? `${m.name} has not been unlocked in ${c.worldName || 'this world'}.`
+                      + (m.n.owned ? ` ${m.n.owned} of the recipes you own need it, so they cannot be used.` : '')
+                    : '';
+                row.innerHTML = `<input type="checkbox" id="${id}"
+                        ${(m.locked || off) ? '' : 'checked'} ${m.locked ? 'disabled' : ''}>
+                    <label for="${id}">${escHtml(m.name)}</label>
+                    <span class="mach-meta">${escHtml(meta)}</span>`;
+                row.querySelector('input').addEventListener('change', ev => {
+                    const set = new Set(tab.calc.blockedMachines || []);
+                    if (ev.target.checked) set.delete(m.id); else set.add(m.id);
+                    tab.calc.blockedMachines = [...set];
+                    saveState();
+                    renderRecipeList(tab);            // what that machine could make
+                    renderMachineNote(tab);
+                    previewSoon();
+                });
+                host.appendChild(row);
+            });
+            renderMachineNote(tab, list);
+        }
+
+        function renderMachineNote(tab, list) {
+            const note = document.getElementById('calc-machine-note');
+            if (!note || !REF) return;
+            const c = tab.calc;
+            const total = list ? list.length
+                : REF.machines.filter(m => !m.extractor && REF.recipes.some(
+                    r => (r.machines || [r.machine]).includes(m.id))).length;
+            const off = (c.blockedMachines || []).length;
+            if (c.worldMachines) {
+                const have = c.worldMachines.length;
+                note.textContent = `From "${c.worldName || 'your save'}": ${have} of ${total} machines `
+                    + `unlocked. Untick one to keep it out of the plan`
+                    + (off ? ` (${off} switched off).` : '.');
+            } else {
+                note.textContent = 'Untick a machine to keep everything made in it out of the plan'
+                    + (off ? ` (${off} switched off).` : '.');
+            }
+        }
 
         function availableRecipes(tab) {
             const c = tab.calc;
@@ -3973,12 +4120,17 @@
                 .slice(0, 300);
             if (!list.length) { host.innerHTML = '<p class="calc-hint">Nothing matches.</p>'; return; }
             list.forEach(r => {
+                const st = recipeMachineState(tab, r);
                 const row = document.createElement('div');
-                row.className = 'rcp';
+                row.className = 'rcp' + (st.ok ? '' : ' locked');
                 const id = 'rcp_' + r.id;
-                row.innerHTML = `<input type="checkbox" id="${id}" ${blocked.has(r.id) ? '' : 'checked'}>
+                const why = st.ok ? '' : (st.off
+                    ? `<span class="need-badge" title="You switched this machine off">needs ${escHtml(machineName(st.need))} (off)</span>`
+                    : `<span class="need-badge locked" title="Not unlocked in this world">needs ${escHtml(machineName(st.need))}</span>`);
+                row.innerHTML = `<input type="checkbox" id="${id}"
+                        ${(blocked.has(r.id) || !st.ok) ? '' : 'checked'} ${st.ok ? '' : 'disabled'}>
                     <label for="${id}">${escHtml(r.name)}</label>
-                    ${r.alternate ? '<span class="alt-badge">ALT</span>' : ''}`;
+                    ${r.alternate ? '<span class="alt-badge">ALT</span>' : ''}${why}`;
                 row.querySelector('input').addEventListener('change', ev => {
                     const s = new Set(tab.calc.blockedRecipes);
                     if (ev.target.checked) s.delete(r.id); else s.add(r.id);
@@ -4808,6 +4960,7 @@
                     uk: c.worldUnknown || [],
                     p:  c.worldParser || null,
                     sc: c.worldSchematics || null,
+                    dv: c.worldDetect || 1,
                 } : null,
             };
         }
@@ -4841,6 +4994,7 @@
                 calc.worldUnknown = c.w.uk || [];
                 calc.worldParser = c.w.p || null;
                 calc.worldSchematics = c.w.sc || null;
+                calc.worldDetect = c.w.dv || 1;
             }
 
             // Keep the goal and the priority list consistent whichever the

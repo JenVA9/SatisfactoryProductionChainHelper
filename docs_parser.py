@@ -257,6 +257,10 @@ def _load_docs_locked(path: str = None) -> dict:
     buildings  = {}
     schematics = {}
     resources  = {}
+    # build-gun recipe class -> descriptor classes it produces. Resolved to
+    # buildings after the loop, because the buildings may be parsed after the
+    # recipes that construct them.
+    build_products = {}
 
     for group in raw:
         nc      = group.get("NativeClass", "")
@@ -290,9 +294,19 @@ def _load_docs_locked(path: str = None) -> dict:
                 if not cn:
                     continue
 
+                # A recipe made with the build gun is how a MACHINE is unlocked:
+                # the schematic that grants it hands over this recipe. Note it
+                # before moving on, because nothing else in the game data says
+                # which milestone gives you which building.
+                if "BuildGun" in str(cls.get("mProducedIn", "")):
+                    made = _ITEM_RE.findall(cls.get("mProduct", ""))
+                    if made:
+                        build_products[cn] = made
+                    continue
+
                 produced_in = _parse_produced_in(cls.get("mProducedIn", ""))
                 if not produced_in:
-                    continue   # hand-crafted / build-gun only
+                    continue   # hand-crafted only
 
                 ingredients = _parse_item_list(cls.get("mIngredients", ""), fluids)
                 products    = _parse_item_list(cls.get("mProduct", ""), fluids)
@@ -369,12 +383,31 @@ def _load_docs_locked(path: str = None) -> dict:
                     "metadata":  {"manufacturingSpeed": speed},
                 }
 
+    # Which building each build recipe constructs. Matched on what the recipe
+    # PRODUCES, never on its name: the Foundry's recipe is called
+    # Recipe_SmelterMk1_C and the Smelter's is Recipe_SmelterBasicMk1_C, so a
+    # name-based match would have swapped the two.
+    build_recipes = {}
+    for rc, made in build_products.items():
+        for desc in made:
+            if desc.startswith("Desc_"):
+                b = "Build_" + desc[len("Desc_"):]
+                if b in buildings:
+                    build_recipes[rc] = b
+                    break
+
+    # Each schematic knows which buildings it hands over.
+    for sc in schematics.values():
+        sc["buildings"] = sorted({build_recipes[r] for r in sc["recipes"]
+                                  if r in build_recipes})
+
     _cache = {
         "items":      items,
         "recipes":    recipes,
         "buildings":  buildings,
         "schematics": schematics,
         "resources":  resources,
+        "build_recipes": build_recipes,
     }
     print(f"[docs_parser] Loaded {len(items)} items, {len(recipes)} recipes, "
           f"{len(buildings)} buildings, {len(schematics)} schematics, {len(resources)} resources")

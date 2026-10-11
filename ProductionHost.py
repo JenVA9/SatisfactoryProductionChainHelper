@@ -426,6 +426,9 @@ def reference():
         "name":      r["name"],
         "alternate": r["alternate"],
         "machine":   (r["producedIn"] or [None])[0],
+        # Every machine it can run in - the model takes the first one that is
+        # available, so the UI has to know them all to say what is usable.
+        "machines":  list(r["producedIn"]),
         "products":  [p["item"] for p in r["products"]],
     } for cn, r in data["recipes"].items()]
     recipes.sort(key=lambda x: x["name"])
@@ -434,6 +437,9 @@ def reference():
         "id":    cn,
         "name":  b["name"],
         "power": b.get("power", 0.0),
+        # Miners and pumps are buildings too, but they are not something a
+        # recipe runs in, so the machine list must be able to leave them out.
+        "extractor": bool(b.get("extractor")),
     } for cn, b in data["buildings"].items()]
     machines.sort(key=lambda x: x["name"])
 

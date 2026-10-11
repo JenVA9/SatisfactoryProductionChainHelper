@@ -114,12 +114,26 @@ def _class_of(path_name: str) -> str:
     return str(path_name).split(".")[-1]
 
 
-def _machines_for(recipe_classes, data) -> list:
-    machines, recipes = set(), data["recipes"]
-    for rc in recipe_classes:
-        for m in (recipes.get(rc) or {}).get("producedIn", []):
-            machines.add(m)
-    return sorted(machines)
+def _machines_unlocked(built, data) -> list:
+    """
+    Which production machines the player can actually build.
+
+    This used to be inferred from the unlocked RECIPES - a machine counted as
+    available if any recipe you had was made in it. That is wrong in the one way
+    that matters: alternate recipes come from hard drives and say nothing about
+    the machine. A save with the Foundry never unlocked but twelve Foundry
+    alternates in hand reported the Foundry as available, and likewise the
+    Converter (two alternates) and the Hadron Collider (seven).
+
+    The reliable signal is the machine's own build recipe, which is handed over
+    by a specific schematic - `built` is the set of buildings the player's
+    purchased schematics grant. Only manufacturing machines are reported (those
+    that some recipe is produced in), matching what the list always held.
+    """
+    makes_recipes = set()
+    for r in data["recipes"].values():
+        makes_recipes.update(r.get("producedIn", []))
+    return sorted(m for m in built if m in makes_recipes)
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +178,7 @@ def parse_save(path: str, docs_path: str = None, progress=None) -> dict:
 
     say("Matching unlocked schematics", 0.85)
 
-    unlocked, unknown = set(), []
+    unlocked, unknown, built = set(), [], set()
     for sc in schematics:
         entry = known.get(sc)
         if entry is None:
@@ -173,6 +187,7 @@ def parse_save(path: str, docs_path: str = None, progress=None) -> dict:
             unknown.append(sc)
             continue
         unlocked.update(entry["recipes"])
+        built.update(entry.get("buildings", []))
 
     # Only keep recipes we actually have machine data for.
     recipes = sorted(r for r in unlocked if r in data["recipes"])
@@ -188,7 +203,7 @@ def parse_save(path: str, docs_path: str = None, progress=None) -> dict:
     return {
         "schematics":         sorted(set(schematics)),
         "recipes":            recipes,
-        "machines":           _machines_for(recipes, data),
+        "machines":           _machines_unlocked(built, data),
         "resources":          resources,       # None == unlimited (water)
         "unknown_schematics": sorted(set(unknown)),
         "parser":             parser_used,

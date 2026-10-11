@@ -1294,6 +1294,70 @@ def _to_solver_result(m: Model, x, e, demand: dict):
 # Public entry point
 # ---------------------------------------------------------------------------
 
+def _is_producible(m: Model, item: str) -> bool:
+    """Can anything left in the model actually make this item?"""
+    if item in m.raw_ix:
+        return bool(m.raw_limits[m.raw_ix[item]] > 0)
+    i = m.item_ix.get(item)
+    return i is not None and bool((m.net[i] > EPS).any())
+
+
+def _explain_unmakeable(item, data, world, blocked_recipes, blocked_machines) -> str:
+    """
+    Say WHY an item cannot be made, in the player's terms.
+
+    Every recipe that makes it was dropped for some reason - its machine is not
+    unlocked, the player switched the machine or the recipe off, or the recipe
+    itself is not unlocked - and which of those it was is exactly what someone
+    needs to know to fix it.
+    """
+    name = data["items"].get(item, {}).get("name", item)
+    bname = lambda b: data["buildings"].get(b, {}).get("name", b)   # noqa: E731
+
+    makers = [(rc, r) for rc, r in data["recipes"].items()
+              if any(p["item"] == item for p in r["products"])]
+    if not makers:
+        return f"{name} cannot be made by any machine recipe."
+
+    allowed_recipes = set(world["recipes"]) if world else None
+    allowed_machines = set(world["machines"]) if world else None
+    locked, off, recipes_off, not_unlocked = set(), set(), False, False
+    for rc, r in makers:
+        if allowed_recipes is not None and rc not in allowed_recipes:
+            not_unlocked = True
+            continue
+        if rc in blocked_recipes:
+            recipes_off = True
+            continue
+        for mch in r["producedIn"]:
+            if mch in blocked_machines:
+                off.add(mch)
+            elif allowed_machines is not None and mch not in allowed_machines:
+                locked.add(mch)
+
+    def a_list(buildings):
+        # "an Assembler or a Foundry" - the article matters more than it looks
+        # in an error someone is going to read twice.
+        names = sorted(bname(b) for b in buildings)
+        return " or ".join(("an " if n[:1].lower() in "aeiou" else "a ") + n
+                           for n in names)
+
+    parts = []
+    if locked:
+        parts.append(f"it needs {a_list(locked)}, "
+                     f"which {'is' if len(locked) == 1 else 'are'} not unlocked in this world")
+    if off:
+        parts.append(f"it needs {a_list(off)}, "
+                     f"which you have switched off")
+    if recipes_off:
+        parts.append("the recipes for it are switched off")
+    if not_unlocked and not (locked or off or recipes_off):
+        parts.append("none of its recipes are unlocked in this world")
+    if not parts:
+        return f"{name} cannot be made with what is available."
+    return f"{name} cannot be made: " + "; ".join(parts) + "."
+
+
 def calculate(targets, mode="least_power", depth="quick", world=None,
               blocked_recipes=(), blocked_machines=(), name=None,
               resource_limits=None, least_resources="off", time_limit=None,
@@ -1332,6 +1396,15 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
              and float(t.get("amount") or 0) > 0}
     maximise = [t["item"] for t in targets if t.get("type") == "maximize"]
     linked = [t["item"] for t in targets if t.get("type") == "linked"]
+
+    # A target nothing in the model can produce used to vanish: the demand
+    # vector skips items the model never mentions, so asking for 60 Iron Plate
+    # with the Constructor switched off returned a successful, EMPTY plan.
+    # Refuse it, and say which machine or recipe is the reason.
+    for it in list(exact) + maximise + linked:
+        if not _is_producible(m, it):
+            raise ValueError(_explain_unmakeable(
+                it, m.data, world, set(blocked_recipes), set(blocked_machines)))
 
     dropped = []
     if least_resources in ("soft", "hard"):
@@ -1374,6 +1447,11 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
         m, demand, set(levels) if allow_reduction else set(),
         mode, depth, time_limit)
     x = _prune_noise(m, x, e, demand)
+    if not (np.any(x > EPS) or np.any(e > EPS)):
+        # Belt and braces: whatever slipped past, an empty plan is never an
+        # answer to a request for something.
+        raise ValueError("No plan could be built for those targets with the "
+                         "machines and recipes that are available.")
 
     # Each resource needs its own extractors, so round up per resource. Taking
     # ceil() of the combined fraction under-reports whenever more than one
