@@ -718,6 +718,18 @@
                  font-size: 10px;
                  color: var(--text-dim);
              }
+             /* The same setting expressed as a production rate - the game lets
+                you type either, and a clock like 91.6667% is far easier to
+                enter as "55 per min". Highlighted when the rate is the clean
+                number to type. */
+             .count-rate {
+                 font-size: 10px;
+                 color: var(--text-dim);
+             }
+             .count-rate.key {
+                 color: var(--accent-icon);
+                 font-weight: 600;
+             }
 
              /* Byproduct / output dismiss card */
              .dismiss-card {
@@ -2794,18 +2806,49 @@
                 countDiv.className = 'card-count';
                 const whole = Math.floor(node.count);
                 const extra = node.count - whole;
+                const plan = node.clock_plan;
 
-                if (whole > 0) {
+                // How a clock is shown: the percentage, then the same setting as
+                // a production rate. When the RATE is the clean number the
+                // calculator settled on, that is the one to type, so it is
+                // emphasised.
+                const rateChip = (rate, viaRate, each) => {
+                    if (rate === null || rate === undefined || !isFinite(rate)) return '';
+                    return `<span class="count-rate${viaRate ? ' key' : ''}" `
+                        + `title="${viaRate
+                            ? 'Type this into the target production rate box'
+                            : 'The same setting as a production rate'}">`
+                        + `· ${fmtAmt(rate)}/min${each ? ' each' : ''}</span>`;
+                };
+                const addRow = html => {
                     const row = document.createElement('div');
                     row.className = 'count-row';
-                    row.innerHTML = `<span class="count-num">${whole}</span><span class="count-clock">× 100%</span>`;
+                    row.innerHTML = html;
                     countDiv.appendChild(row);
-                }
-                if (extra > 0.001) {
-                    const row = document.createElement('div');
-                    row.className = 'count-row';
-                    row.innerHTML = `<span class="count-num">1</span><span class="count-clock">× ${fmtAmt(extra * 100)}%</span>`;
-                    countDiv.appendChild(row);
+                };
+
+                if (plan && plan.mode === 'even') {
+                    // Every machine the same, a little under 100%.
+                    addRow(`<span class="count-num">${plan.machines}</span>`
+                        + `<span class="count-clock">× ${fmtAmt(plan.clock)}%</span>`
+                        + rateChip(plan.rate, plan.via === 'rate', true));
+                } else if (plan) {
+                    if (plan.whole > 0) {
+                        addRow(`<span class="count-num">${plan.whole}</span><span class="count-clock">× 100%</span>`);
+                    }
+                    if (plan.mode === 'last') {
+                        addRow(`<span class="count-num">1</span>`
+                            + `<span class="count-clock">× ${fmtAmt(plan.clock)}%</span>`
+                            + rateChip(plan.rate, plan.via === 'rate', false));
+                    }
+                } else {
+                    // Share-link chains carry no plan; show them as before.
+                    if (whole > 0) {
+                        addRow(`<span class="count-num">${whole}</span><span class="count-clock">× 100%</span>`);
+                    }
+                    if (extra > 0.001) {
+                        addRow(`<span class="count-num">1</span><span class="count-clock">× ${fmtAmt(extra * 100)}%</span>`);
+                    }
                 }
                 body.appendChild(countDiv);
             } else {

@@ -860,14 +860,103 @@ def clock_is_dialable(clock_pct):
     return abs(clock_pct * 900 - round(clock_pct * 900)) < 1e-4
 
 
-def nice_fraction_stats(x):
-    """(dialable machine groups, total) for a machine-count vector."""
+# A target production rate is typed, so it only has to be a number a person
+# would type: two decimals at most.
+RATE_STEP = 0.01
+# A rate-tidy fraction costs a hair more than a clock-tidy one, so when both
+# work the plan keeps the familiar percentage.
+RATE_FRACTION_COST = 0.62
+
+
+def rate_is_tidy(rate):
+    """Is this a production rate someone would be happy to type in?"""
+    if rate is None:
+        return False
+    if rate < 1e-9:
+        return True
+    return abs(rate / RATE_STEP - round(rate / RATE_STEP)) < 5e-3
+
+
+def recipe_rate100(m, j):
+    """Items/min of a recipe's first product from ONE machine at 100% clock.
+
+    The first product is the one the game's "target production rate" field
+    refers to.
+    """
+    rc = m.recipe_ids[j]
+    r = m.data["recipes"][rc]
+    if not r["products"]:
+        return 0.0
+    speed = (m.data["buildings"].get(m.machine_of[rc], {})
+             .get("metadata", {}).get("manufacturingSpeed", 1.0))
+    return _rate(r["products"][0], r["time"], speed)
+
+
+def clock_plan(n, rate100=None):
+    """
+    How to set the machines for `n` machines' worth of a recipe.
+
+    `rate100` is the first product's items/min from one machine at 100%, which
+    is what lets a clock be expressed as a typed rate. Returns:
+
+      mode     "whole" - every machine at 100%
+               "last"  - whole machines at 100% plus ONE part-machine
+               "even"  - every machine the same, slightly under 100%
+      via      "clock" or "rate": which number is the clean one to enter
+               (None when neither is)
+      clock    percentage of the machine(s) being dialled
+      rate     items/min of the machine(s) being dialled
+      tidy     whether any option lands on a clean number
+
+    Preference when several work: the part-machine's percentage (what people
+    already expect), then its rate, then spreading evenly.
+    """
+    whole = int(math.floor(n + 1e-6))
+    frac = n - whole
+    if frac > 1.0 - 1e-6:
+        whole, frac = whole + 1, 0.0
+    if frac < 1e-6:
+        return {"mode": "whole", "machines": whole, "whole": whole,
+                "clock": 100.0, "rate": rate100, "via": "clock", "tidy": True}
+
+    have_rate = bool(rate100) and rate100 > 0
+    options = []
+    ca, ra = frac * 100.0, (frac * rate100 if have_rate else None)
+    if clock_is_dialable(ca):
+        options.append(("last", ca, ra, "clock"))
+    if have_rate and rate_is_tidy(ra):
+        options.append(("last", ca, ra, "rate"))
+    if whole >= 1:                      # with no whole machines, even == last
+        cb = n / (whole + 1) * 100.0
+        rb = n / (whole + 1) * rate100 if have_rate else None
+        if clock_is_dialable(cb):
+            options.append(("even", cb, rb, "clock"))
+        if have_rate and rate_is_tidy(rb):
+            options.append(("even", cb, rb, "rate"))
+
+    mode, clock, rate, via = options[0] if options else ("last", ca, ra, None)
+    return {"mode": mode, "machines": whole + 1,
+            "whole": whole if mode == "last" else 0,
+            "clock": clock, "rate": rate, "via": via, "tidy": bool(options)}
+
+
+def nice_fraction_stats(x, m=None):
+    """
+    (tidy machine groups, total) for a machine-count vector.
+
+    With the model supplied a recipe is tidy if EITHER its clock or its rate is
+    clean (see `clock_plan`). Without it only the clock is judged, as before.
+    Raw extraction is never passed in here and is never counted.
+    """
     total = ok = 0
-    for v in x:
+    for j, v in enumerate(x):
         if v <= EPS:
             continue
         total += 1
-        if clock_is_dialable((v - math.floor(v + 1e-9)) * 100.0):
+        if m is None:
+            if clock_is_dialable((v - math.floor(v + 1e-9)) * 100.0):
+                ok += 1
+        elif clock_plan(float(v), recipe_rate100(m, j))["tidy"]:
             ok += 1
     return ok, total
 
@@ -1071,7 +1160,7 @@ def _easy_numbers(m: Model, demand: dict, xs, depth):
     # plan is preferred even below stage 1's output: you can always scale a
     # working, dialable layout up later, whereas raw counts like 78.1481% are
     # unusable however much they produce.
-    ok, tot = nice_fraction_stats(xs)
+    ok, tot = nice_fraction_stats(xs, m)
     xs_dialable = (tot == 0 or ok == tot)
     floor = (score(xs) - 1e-6) if xs_dialable else NICE_MIN_SCORE
     best, best_score = None, floor
@@ -1489,6 +1578,14 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
 
     solver_result = _to_solver_result(m, x, e, achieved)
     nodes, edges = SCR._build_graph(solver_result, m.data)
+    # Tell the card how to set each recipe's machines. Recipe nodes only: raw
+    # extraction has no clock to judge, there are just as many miners as needed.
+    for nd in nodes:
+        if nd.get("kind") != "recipe" or not (nd.get("count") or 0) > 0:
+            continue
+        first = next(iter(nd.get("outputs") or {}), None)
+        r100 = (nd["outputs"][first] / nd["count"]) if first else None
+        nd["clock_plan"] = clock_plan(float(nd["count"]), r100)
     layers = SCR._topological_layers(nodes, edges)
 
     return {
@@ -1514,8 +1611,8 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
             "resource_types": int(sum(1 for k, v in enumerate(e)
                                       if v > EPS and np.isfinite(m.raw_limits[k]))),
             "dropped_resources": dropped,
-            "nice_machines":  nice_fraction_stats(x)[0],
-            "machine_groups": nice_fraction_stats(x)[1],
+            "nice_machines":  nice_fraction_stats(x, m)[0],
+            "machine_groups": nice_fraction_stats(x, m)[1],
             "byproducts":     len(byproducts),
             # Total leftover per minute. "Easiest" can leave a trickle (a few
             # hundredths) because machine counts are quantised, so report the
@@ -1623,7 +1720,7 @@ def _plan_stats(m: Model, x, e, demand: dict, mode: str):
     """Just enough of the stats to judge a plan by its mode's own measure."""
     extractors = int(sum(math.ceil(m.raw_machines[k] * e[k] - EPS)
                          for k in range(len(e)) if e[k] > EPS))
-    nice, groups = nice_fraction_stats(x)
+    nice, groups = nice_fraction_stats(x, m)
 
     # Leftovers have to be counted here, not left at zero: "easiest" is judged
     # on them first, so a stub value made every plan look equally tidy and the
