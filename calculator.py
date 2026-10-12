@@ -651,10 +651,31 @@ def _nice(v: float) -> float:
     """Round down to a 'nice', easily-underclocked number."""
     if v <= 0:
         return 0.0
-    for step in (100, 60, 50, 30, 25, 20, 15, 12, 10, 6, 5, 4, 3, 2, 1):
-        if v >= step:
-            return math.floor(v / step) * step
-    return math.floor(v * 2) / 2
+    # The largest round figure at or under v. Thirds count (3.3333, 6.6667,
+    # 13.3333 ...) because they dial in cleanly as a recurring clock, and so do
+    # halves and quarters of a round number (2.5, 7.5, 12.5).
+    best = 0.0
+    e = 10.0 ** math.floor(math.log10(v))
+    for dec in (e / 10.0, e, e * 10.0):
+        for base in (1, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 8, 9, 10, 12, 12.5, 15,
+                     20, 25, 30, 40, 50, 60, 75, 90, 100,
+                     10.0 / 3.0, 20.0 / 3.0, 40.0 / 3.0, 50.0 / 3.0):
+            cand = base * dec
+            if cand <= v * (1.0 + 1e-9) and cand > best:
+                best = cand
+    return round(best, 6) if best else math.floor(v * 2) / 2
+
+
+def _nice_levels(v: float, band: float = 0.15, limit: int = 6):
+    """Round figures from `v` downwards, within `band` of it, best first."""
+    out, cur = [], v
+    while cur > 0 and len(out) < limit:
+        n = _nice(cur)
+        if n <= 0 or n < v * (1.0 - band):
+            break
+        out.append(n)
+        cur = n * (1.0 - 1e-6) - 1e-9
+    return out
 
 
 def _trim(m: Model, dem, x):
@@ -861,7 +882,7 @@ def clock_is_dialable(clock_pct):
 
 
 # A target production rate is typed, so it only has to be a number a person
-# would type: two decimals at most.
+# would type: two decimals, or a recurring one like 22.222.
 RATE_STEP = 0.01
 # A rate-tidy fraction costs a hair more than a clock-tidy one, so when both
 # work the plan keeps the familiar percentage.
@@ -874,7 +895,11 @@ def rate_is_tidy(rate):
         return False
     if rate < 1e-9:
         return True
-    return abs(rate / RATE_STEP - round(rate / RATE_STEP)) < 5e-3
+    # Same standard as a clock: terminating within two decimals, or a single
+    # repeating digit after at most two fixed ones (22.222.., 55, 12.5, 6.6666..).
+    # Those are exactly the rates whose value times 900 is a whole number.
+    v = rate * 900.0
+    return abs(v - round(v)) < 5e-3 * 9
 
 
 def recipe_rate100(m, j):
@@ -987,7 +1012,7 @@ NICE_FRACTIONS = [
 ]
 
 
-def _easy_numbers(m: Model, demand: dict, xs, depth):
+def _easy_numbers(m: Model, demand: dict, xs, depth, pinned=()):
     """
     Second pass for "easiest": rebuild the plan on machine counts a human can
     actually set.
@@ -1120,6 +1145,18 @@ def _easy_numbers(m: Model, demand: dict, xs, depth):
                          m.raw_limits])
     budget = 10 if depth == "absolute" else 5
 
+    def pinned_ok(vec_x):
+        """Do the pinned targets (a MAX level already snapped to a round
+        number) come out at exactly that number? 5.9996 for a 6 is not it."""
+        if not pinned:
+            return True
+        _, ve = _trim(m, dem_vec, vec_x)
+        prod = m.net @ vec_x
+        for k2, it in enumerate(m.raw_items):
+            prod[m.item_ix[it]] += ve[k2]
+        return all(prod[m.item_ix[it]] >= targets[it] * (1 - 1e-6)
+                   for it in pinned if it in targets and it in m.item_ix)
+
     def score(vec_x):
         """Worst fraction of any target this plan actually delivers."""
         _, ve = _trim(m, dem_vec, vec_x)
@@ -1149,6 +1186,8 @@ def _easy_numbers(m: Model, demand: dict, xs, depth):
             out[j] = (r.x[a]
                       + sum(fracs[k] * r.x[Z0 + a * K + k] for k in range(K))
                       + r.x[F0 + a] * FREE_STEP)
+        if out.sum() > EPS and not pinned_ok(out):
+            out = np.zeros(m.n_r)                  # short of its round number
         results.append(out if out.sum() > EPS else None)
         # The strict plan makes nothing spare. Take it as soon as it delivers a
         # worthwhile amount, even a little under the target - trimming the rate
@@ -1179,7 +1218,8 @@ def _surplus_cost_cols(m: Model, cols):
     return w @ cols
 
 
-def _optimise(m: Model, demand: dict, mode: str, depth: str, time_limit=None):
+def _optimise(m: Model, demand: dict, mode: str, depth: str, time_limit=None,
+              pinned=()):
     """
     Returns (machine_counts, extraction, proven).
 
@@ -1347,7 +1387,7 @@ def _optimise(m: Model, demand: dict, mode: str, depth: str, time_limit=None):
         if not r.success:
             flag["exact"] = False         # ran out of time before proving it
         if mode == "easiest":
-            xs = _easy_numbers(m, demand, xs, depth)
+            xs = _easy_numbers(m, demand, xs, depth, pinned)
         return (*_trim(m, dem, xs), flag["exact"])
 
     raise ValueError(f"Unknown mode: {mode}")
@@ -1518,8 +1558,15 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
         base = dict(exact)
         base.update({k: v for k, v in levels.items() if v > EPS})
         levels.update(_solve_levels_linked(m, base, linked))
+    level_options = None
     if mode == "easiest":
         levels = {k: _nice(v) for k, v in levels.items()}
+        if len(levels) == 1 and not exact:
+            # Scan the round figures just under the true maximum and keep the
+            # one whose chain dials in best - a 6/min plan with one awkward
+            # clock can beat a 6.67/min plan where every machine is awkward.
+            (it0, v0), = levels.items()
+            level_options = _nice_levels(max(float(v0), MIN_MAXIMISE_RATE))
 
     demand = dict(exact)
     # Never drop a maximised target for coming out small - asking to maximise an
@@ -1532,9 +1579,31 @@ def calculate(targets, mode="least_power", depth="quick", world=None,
 
     # A maximised target may give a little ground if that buys a better plan -
     # often it is the last couple of per cent that forces an awkward recipe in.
-    x, e, integral, demand = _optimise_flexible(
-        m, demand, set(levels) if allow_reduction else set(),
-        mode, depth, time_limit)
+    if level_options and len(level_options) > 1:
+        (it0,) = levels
+        best = None
+        for lv in level_options:
+            d2 = dict(demand)
+            d2[it0] = max(float(lv), MIN_MAXIMISE_RATE)
+            try:
+                cand = _optimise_flexible(m, d2, set(levels), mode, depth,
+                                          time_limit)
+            except Exception:                      # noqa: BLE001
+                continue
+            st = _plan_stats(m, cand[0], cand[1], cand[3], mode)
+            groups = st.get("machine_groups") or 0
+            bad = groups - (st.get("nice_machines") or 0)
+            key = (bad, st["byproducts"], -lv)
+            if best is None or key < best[0]:
+                best = (key, cand)
+        if best is None:
+            raise ValueError("No plan could be built for those targets with "
+                             "the machines and recipes that are available.")
+        x, e, integral, demand = best[1]
+    else:
+        x, e, integral, demand = _optimise_flexible(
+            m, demand, set(levels) if allow_reduction else set(),
+            mode, depth, time_limit)
     x = _prune_noise(m, x, e, demand)
     if not (np.any(x > EPS) or np.any(e > EPS)):
         # Belt and braces: whatever slipped past, an empty plan is never an
@@ -1784,6 +1853,11 @@ def _optimise_flexible(m: Model, demand: dict, flexible: set, mode: str,
     Solve at the settled levels, then see whether easing the maximised targets
     buys a better plan. Returns (x, e, integral, demand_used).
     """
+    # "easiest" already snapped each MAX level to a round number; easing it
+    # again would undo that, so it is pinned instead of flexible.
+    pinned = tuple(flexible) if mode == "easiest" else ()
+    if pinned:
+        flexible = set()
     tries = 1 + (len(MAX_REDUCE_STEPS) if flexible and mode != "maximise" else 0)
 
     # Share one budget across the attempts rather than spending a fresh one on
@@ -1795,7 +1869,7 @@ def _optimise_flexible(m: Model, demand: dict, flexible: set, mode: str,
         budget = ABSOLUTE_TIME_LIMIT
     slot = (budget / tries) if budget else None
 
-    x, e, integral = _optimise(m, demand, mode, depth, slot)
+    x, e, integral = _optimise(m, demand, mode, depth, slot, pinned)
     if not flexible or mode == "maximise":
         return x, e, integral, demand
 
